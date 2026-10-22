@@ -13,6 +13,7 @@ import {
   requestUrl,
   type App,
   type Editor,
+  getLanguage,
 } from 'obsidian';
 import { serializeDocument } from '../document/codec';
 import { createDocument, defaultBackground, paperById, PAPER_PRESETS, type BackgroundKind } from '../document/model';
@@ -20,7 +21,7 @@ import { GeometryCache } from '../document/geometry-cache';
 import { renderPageToCanvas } from '../rendering/paint';
 import { pageToSvg } from '../rendering/svg-export';
 import { preloadImages, setImageResolver } from '../rendering/items-paint';
-import { setLanguage, t } from '../ui/i18n';
+import { languageOf, setLanguage, t } from '../ui/i18n';
 import { AIService } from '../ai/service';
 import { myscriptHttp, obsidianHttp, renderAISettings, secretStorage, secretsSupported } from './ai-settings';
 import type { AIBridge } from '../editor/handnote-editor';
@@ -73,7 +74,8 @@ export default class HandNotePlugin extends Plugin {
       for (const u of blobUrls) URL.revokeObjectURL(u);
       setImageResolver(async (s) => s);
     });
-    setLanguage(null);
+    // the interface language Obsidian reports (Settings → General → Language)
+    setLanguage(languageOf(getLanguage()));
     this.ai = new AIService({
       settings: () => this.settings.ai,
       saveSettings: (a) => {

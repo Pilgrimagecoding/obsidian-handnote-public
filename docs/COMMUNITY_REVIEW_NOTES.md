@@ -77,6 +77,22 @@ Notes are `.handnote` JSON files in the vault (`docs/FILE_FORMAT.md`). Every sav
 was not changed by sync since it was read (otherwise a conflict copy is kept); a recovery journal
 and backups protect unsaved strokes; damaged or newer-format files open read-only.
 
+## Scanner findings explained (scan of 0.8.0, 2026-10-22)
+
+| Finding | Explanation | Status |
+|---|---|---|
+| "Creates script elements at runtime" | an in-page fallback for systems without module workers loaded the bundled recognition program from a blob URL (never external code) | **removed in 0.8.1** (Worker only) |
+| Blanket `eslint-disable` in `hanzi-data.generated.ts` | generated data module | **removed in 0.8.1**; the file lints clean |
+| Runtime base64 decode | the built-in ONNX Runtime files (gzip + base64) and the Chinese stroke table are stored as base64 strings and decoded locally; embedded images use `data:` URLs | by design, no remote data |
+| Unrecognized WASM file | `ort-wasm-simd-threaded.wasm` from `onnxruntime-web@1.24.2`, unmodified, SHA-256 pinned (`src/local/manifest.ts`), licence in `vendor/onnxruntime-web/` | by design (built in as the maintainers advised) |
+| Network request calls | model / font downloads after the user's click, MyScript and AI providers with the user's own keys (see "Network use") | disclosed in README / PRIVACY |
+| `fetch` (4) | MyScript (abortable, falls back to `requestUrl`) and local `data:` URLs | kept |
+| `localStorage` | the only read was the app language; **0.8.1 uses `getLanguage()`**; other matches are UI string keys such as `localStorageBlocked` | fixed |
+| Clipboard access | copy LaTeX / Markdown / text / images and the self-test report on the user's request | by design |
+| main.js > 5 MB | built-in runtime (≈ 4.2 MB); Obsidian Sync Standard does not sync files over 5 MB — stated in README / FAQ | documented |
+| `!important`, `document.createElement`, `setTimeout` without `window.`, deprecated `setWarning` / `setDynamicTooltip`, `confirm()` | style / API warnings; `setDestructive` and the settings API are newer than `minAppVersion` 1.11.4 | to be reduced in later versions |
+| Release had an extra file / no attestations | `SHA256SUMS.txt` | **0.8.1:** checksums in the release notes, provenance attestations |
+
 ## Licences
 
 HandNote's own code: MIT (`LICENSE`). Third-party parts keep their own licences:

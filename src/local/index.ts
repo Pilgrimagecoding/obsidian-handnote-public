@@ -56,7 +56,7 @@ export class LocalRecognition {
   constructor(
     private readonly fetchBinary: FetchBinary,
     store: StoreLike = new IdbStore(),
-    engineOpts: { idleMs?: number; preferPage?: boolean } = {},
+    engineOpts: { idleMs?: number } = {},
     private readonly probe?: ProbeUrl,
   ) {
     // ONNX Runtime Web is built into main.js: it is never downloaded (Obsidian's policy). The

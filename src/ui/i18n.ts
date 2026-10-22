@@ -1,8 +1,8 @@
 import { EN6, EN7, EN8, EN9, ZH6, ZH7, ZH8, ZH9 } from './i18n-v05';
 
 /**
- * UI strings (Chinese / English). The language follows Obsidian's interface language
- * (localStorage "language"), then the document / browser language.
+ * UI strings (Chinese / English). The language follows Obsidian's interface language (the plugin
+ * passes getLanguage()); elsewhere (lab, tests) the document / browser language.
  */
 const ZH: Record<string, string> = {
   pen: '笔',
@@ -675,14 +675,14 @@ Object.assign(EN, EN9);
 
 let lang: 'zh' | 'en' | null = null;
 
+/** 'zh' for any Chinese interface language, otherwise 'en'. */
+export function languageOf(code: string | null | undefined): 'zh' | 'en' {
+  return (code ?? '').toLowerCase().startsWith('zh') ? 'zh' : 'en';
+}
+
 export function detectLanguage(): 'zh' | 'en' {
   let l = '';
-  try {
-    l = (typeof localStorage !== 'undefined' && localStorage.getItem('language')) || '';
-  } catch {
-    /* storage may be unavailable */
-  }
-  if (!l && typeof document !== 'undefined') l = document.documentElement.lang || '';
+  if (typeof document !== 'undefined') l = document.documentElement.lang || '';
   if (!l && typeof navigator !== 'undefined') l = navigator.language || '';
   return l.toLowerCase().startsWith('zh') ? 'zh' : 'en';
 }

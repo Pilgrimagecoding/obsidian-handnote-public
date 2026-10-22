@@ -35,7 +35,7 @@ const EXCLUDE = [
   /^STATUS\.md$/,
   /^main\.js$/, // build output: published as a release asset, rebuilt by the scanner
   /^docs\/device-reports\//,
-  /^docs\/release-notes\/(?!0\.8\.0\.md$)/, // private beta notes; the public release notes (0.8.0) are kept
+  /^docs\/release-notes\/(?!(?:0\.(?:[89]|[1-9]\d)\.\d+|[1-9]\d*\.\d+\.\d+)\.md$)/, // private beta notes; public release notes (x.y.z from 0.8.0) are kept
   /^docs\/(DEVELOPMENT_REPORT|IPAD_DEPLOYMENT|IPAD_MINIMAL_TEST|IPAD_TEST_CHECKLIST|IPAD_TEST_DEPLOYMENT_REPORT|SYNC_TEST_PLAN|V0\.2_RELEASE_NOTES)\.md$/,
   /^docs\/(GOODNOTES_REVERSE_ENGINEERING_REPORT|MYSCRIPT_XMIND_RESEARCH)\.md$/,
   /^docs\/(RELEASE_READINESS_AUDIT|PRODUCTION_READINESS_REPORT|SECURITY_AND_PRIVACY_AUDIT|PUBLIC_REPO_OPTIONS|PUBLIC_RELEASE_CHECKLIST|PUBLIC_REPOSITORY_RELEASE_PLAN|RELEASE_CANDIDATE_PLAN|COMER_LICENSE_REQUEST|OBSIDIAN_POLICY_INQUIRY|MAINTENANCE_PLAN|AI_BENCHMARK)\.md$/,

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.8.1 — 2026-10-22
+
+After the first community-directory scan (no change to writing, notes or recognition results):
+
+- Local recognition runs only in a Web Worker; the in-page fallback that injected a module script
+  is removed.
+- Generated stroke-data module: no blanket `eslint-disable` comment.
+- Interface language from Obsidian's `getLanguage()` instead of reading `localStorage`.
+- Releases: build-provenance attestations (public repository); checksums in the release notes, so
+  only the three installable files are attached.
+- README / FAQ: `main.js` size and Obsidian Sync's Standard plan.
+
 ## 0.8.0 — 2026-10-22 (first public release)
 
 First public release, built from the same sources as 0.8.0-beta.4 (public edition). Summary of

@@ -8,17 +8,15 @@ import { LOCAL_MATH, PACKS } from './manifest';
 /**
  * Runs the local recognition program off the main thread so Apple Pencil drawing is never blocked:
  *
- *  1. Web Worker (module worker from a blob URL) — ONNX Runtime Web is imported from the
- *     downloaded runtime pack (blob URL), its WASM is handed over as bytes (no fetch, no path).
- *  2. If workers cannot be created here, the same program runs in the page behind a
- *     MessagePort ("page" mode, reported in the self-test): it still never blocks for more than
- *     one model call at a time, but a long call can delay a stroke — the UI says so.
+ *  a Web Worker (module worker from a blob URL) — ONNX Runtime Web (built into the plugin) is
+ *  imported from a blob URL, its WASM is handed over as bytes (no fetch, no path). Without module
+ *  workers local recognition is not available (no script is ever injected into the page).
  *
  * Memory: models stay loaded while used; after `idleMs` without a request the worker is
  * terminated and everything is freed (next use reloads from IndexedDB, measured).
  */
 
-export type RunMode = 'worker' | 'page';
+export type RunMode = 'worker';
 
 export interface EngineTimings {
   runtimeMs?: number;
@@ -47,7 +45,7 @@ export class LocalEngine {
 
   constructor(
     private readonly store: ModelStore,
-    private readonly opts: { idleMs?: number; preferPage?: boolean } = {},
+    private readonly opts: { idleMs?: number } = {},
   ) {}
 
   get mode(): RunMode | undefined {
@@ -91,48 +89,26 @@ export class LocalEngine {
           }
         };
       });
-    if (!this.opts.preferPage && typeof Worker !== 'undefined') {
-      try {
-        const src = `import * as ort from ${JSON.stringify(ortUrl)};\n${program}\ntry { self.__hnLocalStart(ort, self); } catch (e) { self.postMessage({ id: 0, ok: false, error: String(e && e.message || e) }); }\n`;
-        const url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
-        this.cleanup.push(() => URL.revokeObjectURL(url));
-        const w = new Worker(url, { type: 'module', name: 'handnote-local' });
-        const errored = new Promise<never>((_, reject) => {
-          w.onerror = (ev) => reject(new Error(`worker error: ${(ev).message || 'could not load'}`));
-        });
-        this.worker = w;
-        this.port = w;
-        await Promise.race([ready(w as unknown as { onmessage: ((e: MessageEvent) => void) | null }), errored]);
-        w.onerror = null;
-        this.timings.mode = 'worker';
-        return;
-      } catch (e) {
-        this.worker?.terminate();
-        this.worker = null;
-        this.port = null;
-        console.warn('[HandNote] local recognition worker unavailable, using the page', e);
-      }
+    if (typeof Worker === 'undefined') throw new Error('local recognition needs Web Workers, which this app does not provide');
+    try {
+      const src = `import * as ort from ${JSON.stringify(ortUrl)};\n${program}\ntry { self.__hnLocalStart(ort, self); } catch (e) { self.postMessage({ id: 0, ok: false, error: String(e && e.message || e) }); }\n`;
+      const url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
+      this.cleanup.push(() => URL.revokeObjectURL(url));
+      const w = new Worker(url, { type: 'module', name: 'handnote-local' });
+      const errored = new Promise<never>((_, reject) => {
+        w.onerror = (ev) => reject(new Error(`worker error: ${(ev).message || 'could not load'}`));
+      });
+      this.worker = w;
+      this.port = w;
+      await Promise.race([ready(w as unknown as { onmessage: ((e: MessageEvent) => void) | null }), errored]);
+      w.onerror = null;
+      this.timings.mode = 'worker';
+    } catch (e) {
+      this.worker?.terminate();
+      this.worker = null;
+      this.port = null;
+      throw new Error(`local recognition worker could not start: ${String((e as Error)?.message ?? e)}`);
     }
-    // page mode: same program behind a MessageChannel, loaded as a module script
-    const ch = new MessageChannel();
-    const key = `__hnLocalPort${Math.random().toString(36).slice(2)}`;
-    (window as unknown as Record<string, unknown>)[key] = ch.port2;
-    const src = `import * as ort from ${JSON.stringify(ortUrl)};\n${program}\nconst p = window[${JSON.stringify(key)}]; delete window[${JSON.stringify(key)}]; p.start(); self.__hnLocalStart(ort, p);\n`;
-    const url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
-    const s = document.createElement('script');
-    s.type = 'module';
-    s.src = url;
-    this.port = ch.port1;
-    ch.port1.start();
-    const p = ready(ch.port1);
-    document.head.appendChild(s);
-    this.cleanup.push(() => {
-      s.remove();
-      URL.revokeObjectURL(url);
-      ch.port1.close();
-    });
-    await p;
-    this.timings.mode = 'page';
   }
 
   /** Start the runtime (worker + ONNX Runtime WASM). */

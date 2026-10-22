@@ -145,6 +145,9 @@ See [FAQ.md](FAQ.md). Short answers:
 - A note made with a newer HandNote opens read-only in an older one. Update HandNote on every
   device that edits the same notes.
 - Phone layouts are not optimised.
+- `main.js` is about 5.9 MB because the recognition runtime is built in. Obsidian Sync's Standard
+  plan does not sync files over 5 MB, so with that plan install HandNote on each device from
+  Community plugins (your notes sync as usual).
 
 ## Feedback
 

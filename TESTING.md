@@ -2,6 +2,12 @@
 
 Three automated layers plus the manual iPad protocol.
 
+## v0.8.1 (2026-10-22) — community-directory scan fixes
+
+Typecheck PASS; unit 182 / 182 (public) and 182 / 182 (private); browser 83 / 83 each; Obsidian
+E2E 34 / 34 and lifecycle 12 / 12 each; edition switch 5 / 5; ESLint 0 errors, 54 warnings. The
+self-test and E2E confirm recognition runs in the worker (the in-page fallback was removed).
+
 ## v0.8.0-beta.4 (2026-10-22) — public and private editions
 
 Every layer runs in both editions: `npm test` / `npm run test:browser` / `npm run build` are the

@@ -88,6 +88,12 @@ recolour or delete them. Grouped pieces are edited as one text with the text too
 Not unless you set up MyScript or an AI provider, and then only the selection you convert, after a
 confirmation. See [PRIVACY.md](PRIVACY.md).
 
+### Does HandNote sync with Obsidian Sync?
+
+Your notes (`.handnote` files) sync like any other file. The plugin itself: `main.js` is about
+5.9 MB because the recognition runtime is built in, and Obsidian Sync's Standard plan does not sync
+files over 5 MB. With that plan, install HandNote on each device from Community plugins.
+
 ### Does it work on iPhone or Android?
 
 It contains nothing desktop-only, but phones are not tested and the toolbar is designed for tablets

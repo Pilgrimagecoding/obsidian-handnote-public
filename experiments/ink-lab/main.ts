@@ -130,7 +130,7 @@ const local = new LocalRecognition(
     return buf;
   },
   params.get('localstore') === 'memory' ? new MemoryStore() : undefined,
-  { idleMs: 0, preferPage: params.get('localpage') === '1' },
+  { idleMs: 0 },
 );
 void local.refresh();
 if (params.get('localconf') === 'strict') Object.assign(CONFIDENCE, { mathScore: 1, textMinP: 2 });

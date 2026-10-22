@@ -9,6 +9,9 @@ on:
     tags: ['[0-9]+.[0-9]+.[0-9]+*']
 permissions:
   contents: write
+  # build provenance attestations for the release files (actions/attest-build-provenance)
+  id-token: write
+  attestations: write
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -55,13 +58,25 @@ jobs:
       # the edition of the files about to be published, stated once more from the artifact itself
       - name: Edition of the release assets
         run: node scripts/check-edition.mjs release/handnote/main.js "${HN_EDITION}"
+      # signed provenance for the three installable files (verifiable with `gh attestation verify`);
+      # artifact attestations are available for public repositories (private ones would need
+      # GitHub Enterprise), so the private repository skips this step
+      - uses: actions/attest-build-provenance@v2
+        if: ${{ !github.event.repository.private }}
+        with:
+          subject-path: |
+            release/handnote/main.js
+            release/handnote/manifest.json
+            release/handnote/styles.css
+      # only the files Obsidian installs are attached; their SHA-256 go into the release notes
       - name: Create GitHub Release (tag = release name = manifest version)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           PRE=""
           case "${GITHUB_REF_NAME}" in *-*) PRE="--prerelease" ;; esac
+          { cat "docs/release-notes/${GITHUB_REF_NAME}.md"; printf '\n---\n\nSHA-256\n\n```text\n'; cat release/handnote/SHA256SUMS.txt; printf '```\n'; } > release/notes.md
           gh release create "${GITHUB_REF_NAME}" $PRE \
-            release/handnote/main.js release/handnote/manifest.json release/handnote/styles.css release/handnote/SHA256SUMS.txt \
+            release/handnote/main.js release/handnote/manifest.json release/handnote/styles.css \
             --title "${GITHUB_REF_NAME} (${HN_EDITION} edition)" \
-            --notes-file "docs/release-notes/${GITHUB_REF_NAME}.md"
+            --notes-file release/notes.md
