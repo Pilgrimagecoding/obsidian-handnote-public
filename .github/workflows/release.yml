@@ -1,0 +1,67 @@
+# Builds, tests and publishes a GitHub Release with the three files Obsidian/BRAT install.
+# Trigger: push a tag equal to manifest.json "version", WITHOUT a "v" prefix:
+#   git tag -a 0.1.0 -m "HandNote 0.1.0" && git push origin 0.1.0
+# Works for private repositories (BRAT then needs a fine-grained token with Contents: read-only).
+# In the private repository the release is the PRIVATE edition (main.js banner "PRIVATE EDITION").
+name: Release
+on:
+  push:
+    tags: ['[0-9]+.[0-9]+.[0-9]+*']
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # exact versions from package-lock.json (onnxruntime-web 1.24.2 is a pinned devDependency; its
+      # files are built into main.js and checked against the SHA-256 pinned in src/local/manifest.ts)
+      - run: npm ci --no-audit --no-fund
+      # Edition (docs/PUBLIC_PRIVATE_RELEASE_STRATEGY.md):
+      #   tag "<version>-public"         → PUBLIC candidate (manifest asset version = the tag)
+      #   other tags, repo has src/private → PRIVATE edition (maintainer's own BRAT betas)
+      #   public source tree (no src/private) → PUBLIC edition (the only one it can build)
+      - name: Choose the edition
+        run: |
+          case "${GITHUB_REF_NAME}" in
+            *-public) echo "HN_EDITION=public" >> "$GITHUB_ENV"; echo "HN_RELEASE_VERSION=${GITHUB_REF_NAME}" >> "$GITHUB_ENV" ;;
+            *) if [ -f src/private/edition/math.ts ]; then echo "HN_EDITION=private" >> "$GITHUB_ENV"; else echo "HN_EDITION=public" >> "$GITHUB_ENV"; fi ;;
+          esac
+          # a stable x.y.z release is never made from the private repository (it would carry the
+          # private edition): stable releases come only from the public source tree
+          if [ -f src/private/edition/math.ts ] && echo "${GITHUB_REF_NAME}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::stable tag ${GITHUB_REF_NAME} in a repository with src/private: refused"; exit 1
+          fi
+      - run: npm run typecheck
+      # the public edition is always built and checked, also in the private repository: it must
+      # never contain the local math model (scripts/check-edition.mjs)
+      - name: Public edition gate
+        run: |
+          HN_EDITION=public npm test
+          HN_EDITION=public node scripts/build.mjs production
+          node scripts/check-edition.mjs main.js public
+      - name: Tests and build of the edition to publish
+        run: |
+          npm test
+          npm run build
+      - run: npm run package
+      # Fails if the tag != manifest version, if release/handnote differs from the build, if the
+      # edition check fails, or if main.js has runtime dependencies other than "obsidian".
+      # stable tags (x.y.z) are additionally checked with --stable rules inside the script
+      - run: node scripts/check-release.mjs "${GITHUB_REF_NAME}"
+      # the edition of the files about to be published, stated once more from the artifact itself
+      - name: Edition of the release assets
+        run: node scripts/check-edition.mjs release/handnote/main.js "${HN_EDITION}"
+      - name: Create GitHub Release (tag = release name = manifest version)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PRE=""
+          case "${GITHUB_REF_NAME}" in *-*) PRE="--prerelease" ;; esac
+          gh release create "${GITHUB_REF_NAME}" $PRE \
+            release/handnote/main.js release/handnote/manifest.json release/handnote/styles.css release/handnote/SHA256SUMS.txt \
+            --title "${GITHUB_REF_NAME} (${HN_EDITION} edition)" \
+            --notes-file "docs/release-notes/${GITHUB_REF_NAME}.md"

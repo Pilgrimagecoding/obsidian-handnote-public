@@ -1,0 +1,37 @@
+{
+  "name": "obsidian-handnote",
+  "version": "0.8.0",
+  "description": "Apple Pencil-first handwriting plugin for Obsidian",
+  "private": true,
+  "author": "Yanzhe Shao",
+  "license": "MIT",
+  "main": "main.js",
+  "scripts": {
+    "build": "node scripts/build.mjs production",
+    "build:private": "node scripts/build.mjs production --private",
+    "dev": "node scripts/build.mjs watch",
+    "typecheck": "node scripts/build-embedded-ort.mjs && node scripts/build-worker.mjs && tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.public.json",
+    "test": "node scripts/run-tests.mjs",
+    "test:browser": "node scripts/run-browser-tests.mjs",
+    "lab": "node scripts/build.mjs lab",
+    "package": "node scripts/package.mjs",
+    "check:release": "node scripts/check-release.mjs",
+    "verify": "npm run typecheck && npm test && npm run build && npm run package && npm run check:release",
+    "verify:private": "npm run typecheck && node scripts/run-tests.mjs --private && node scripts/build.mjs production --private && npm run package && node scripts/check-release.mjs --private",
+    "test:private": "node scripts/run-tests.mjs --private",
+    "test:browser:private": "node scripts/run-browser-tests.mjs --private",
+    "bench:rec": "node scripts/rec-benchmark.mjs",
+    "fixtures:rec": "node scripts/gen-rec-fixtures.mjs",
+    "bench:ink": "node scripts/ink-benchmark.mjs",
+    "data:hanzi": "node scripts/build-hanzi-data.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "obsidian": "^1.8.7",
+    "onnxruntime-web": "1.24.2",
+    "typescript": "6.0.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,59 @@
+# Release-readiness checks on every push: official Obsidian ESLint rules and npm audit.
+# Results are annotations + the job summary (nothing is uploaded anywhere else). Read-only token.
+name: Audit
+on:
+  workflow_dispatch:
+  push:
+    branches: ['feature/**', 'main', 'release/**']
+permissions:
+  contents: write
+  checks: write
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # exact versions from package-lock.json (includes onnxruntime-web 1.24.2, built into main.js)
+      - run: npm ci --no-audit --no-fund
+      - name: Install the official ESLint plugin (not saved to package.json)
+        run: npm install --no-save --no-audit --no-fund eslint@9 eslint-plugin-obsidianmd typescript-eslint
+      - name: Generate the built-in runtime module (git-ignored, needed for type-aware lint)
+        run: node scripts/build-embedded-ort.mjs
+      - name: ESLint (eslint-plugin-obsidianmd, recommended)
+        run: npx eslint . -f json -o eslint.json || true
+      - name: ESLint summary
+        run: node scripts/eslint-summary.mjs eslint.json
+      - name: npm audit
+        run: |
+          npm audit --json > audit.json || true
+          node scripts/audit-summary.mjs audit.json
+      - name: Typecheck and unit tests (public edition)
+        run: |
+          npm run typecheck
+          npm test
+      # the public edition must never contain the local math model (build-time isolation)
+      - name: Public edition build + artifact check
+        run: |
+          npm run build
+          node scripts/check-edition.mjs main.js public
+      - name: Private edition unit tests + artifact check (private repository only)
+        if: hashFiles('src/private/edition/math.ts') != ''
+        run: |
+          npm run test:private
+          npm run build:private
+          node scripts/check-edition.mjs main.js private
+      # On request only (commit message contains "[eslint-autofix]"): apply ESLint's automatic
+      # fixes and push them to the branch ci/eslint-autofix for review. Never to the source branch.
+      - name: ESLint autofix (review branch)
+        if: contains(github.event.head_commit.message, '[eslint-autofix]')
+        run: |
+          npx eslint src --fix || true
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b ci/eslint-autofix
+          git add -A src
+          git commit -m "ESLint automatic fixes (review before merging)" || exit 0
+          git push -f origin ci/eslint-autofix

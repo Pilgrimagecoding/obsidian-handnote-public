@@ -1,0 +1,49 @@
+{
+  "note": "SHA-256 of engine 2 geometry for strokes saved by 0.2.0-beta.1 (no heavyPressure). Recorded from beta.1 code; must never change.",
+  "params": {
+    "beta1": {
+      "width": 1.6,
+      "pressureSensitivity": 0.85,
+      "smoothing": 0.5,
+      "tapering": 0.45,
+      "opacity": 1,
+      "velocityThinning": 0.12,
+      "nibFlatness": 0.12,
+      "nibAngle": -35,
+      "pressureCurve": 3,
+      "minWidthRatio": 0.2,
+      "maxWidthRatio": 2.2,
+      "pressureSmoothing": 0.7,
+      "typicalPressure": 0.3
+    },
+    "ipad": {
+      "width": 2.4,
+      "pressureSensitivity": 0.85,
+      "smoothing": 0.5,
+      "tapering": 0.45,
+      "opacity": 1,
+      "velocityThinning": 0.12,
+      "nibFlatness": 0.12,
+      "nibAngle": -35,
+      "pressureCurve": 0,
+      "minWidthRatio": 0.2,
+      "maxWidthRatio": 2.2,
+      "pressureSmoothing": 0.7,
+      "typicalPressure": 0.3
+    }
+  },
+  "cases": {
+    "beta1/line/p": "89dd3dd4e0e9a6bbd47939b1",
+    "beta1/line/np": "33c13238819d26eb8c2116dc",
+    "beta1/circle/p": "b2449eb4dbeeaa5bd04f6e43",
+    "beta1/circle/np": "6261a3a3d462780f25a6afcd",
+    "beta1/corner/p": "31b1f90aabff0174973c0b8a",
+    "beta1/corner/np": "e5e8db12e5e5a753a6cbb7c4",
+    "ipad/line/p": "f906e5a9a0802cb173b832e5",
+    "ipad/line/np": "51dd7f0dce513f2cb85deec5",
+    "ipad/circle/p": "b49fe3c60bf0a014a62258b6",
+    "ipad/circle/np": "41e92a2c064f2c88d29a5f9d",
+    "ipad/corner/p": "3e4a7efbeba77ef2d1cc7591",
+    "ipad/corner/np": "4bc27acaea9eb01750973495"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@edition/*": [
+        "./src/edition/public/*"
+      ]
+    }
+  },
+  "include": [
+    "src/**/*.ts",
+    "experiments/**/*.ts"
+  ],
+  "exclude": [
+    "src/private/**"
+  ]
+}

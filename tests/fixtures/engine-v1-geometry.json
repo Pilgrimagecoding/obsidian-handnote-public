@@ -1,0 +1,29 @@
+{
+  "note": "SHA-256 of engine v1 geometry for fixed inputs, recorded from v0.1.0 code. Must never change.",
+  "cases": {
+    "fountain/line/p": "00b208134b479751272ec6eb",
+    "fountain/line/np": "4f38448177b4c24b8eded3e4",
+    "fountain/circle/p": "eb8eb7852f4ca29311bd08bb",
+    "fountain/circle/np": "7fefeecfbb4bfacc818cd62c",
+    "fountain/corner/p": "dce2db1afa6c1e8e06168285",
+    "fountain/corner/np": "fb021dfc087d0a10d69f2ba7",
+    "fountain/dot/p": "2fa8af27de6075999485411a",
+    "fountain/dot/np": "2fa8af27de6075999485411a",
+    "ballpoint/line/p": "c8b1bc4308ec80e3c25ca681",
+    "ballpoint/line/np": "f56c398871a651c806e749dd",
+    "ballpoint/circle/p": "9ac44b0cc373374b0f48cb08",
+    "ballpoint/circle/np": "d778fc550fc58014641601ca",
+    "ballpoint/corner/p": "8f447e89ccaa4b18aaec644f",
+    "ballpoint/corner/np": "545f3eed1d4bf58b9777ba0b",
+    "ballpoint/dot/p": "975d4a62d2460edfcdeed63d",
+    "ballpoint/dot/np": "6c900c5936786686224f8b6c",
+    "highlighter/line/p": "b9fb8fd5fa6bccd1edb8438f",
+    "highlighter/line/np": "b9fb8fd5fa6bccd1edb8438f",
+    "highlighter/circle/p": "30d98ea238182822ee7ced24",
+    "highlighter/circle/np": "30d98ea238182822ee7ced24",
+    "highlighter/corner/p": "f78491a148b5c8e64fc9090d",
+    "highlighter/corner/np": "f78491a148b5c8e64fc9090d",
+    "highlighter/dot/p": "f61298bf6a469f3aede4ac6b",
+    "highlighter/dot/np": "f61298bf6a469f3aede4ac6b"
+  }
+}
