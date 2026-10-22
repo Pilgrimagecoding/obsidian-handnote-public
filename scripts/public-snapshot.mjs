@@ -49,6 +49,10 @@ const EXCLUDE = [
   /^tests\/fixtures\/edition\//, // a note made with the private build (unit test skips without it)
   /^tests\/obsidian-e2e\/(edition-switch|runtime-compare)\.mjs$/,
   /^docs\/(PUBLIC_PRIVATE_RELEASE_STRATEGY|PUBLIC_LICENSE_AUDIT|WASM_BUNDLING_FEASIBILITY|LOCAL_RECOGNITION|PRIVATE_EDITION|LICENSE_PROPOSAL|DEVICE_TEST_GUIDE|DEVICE_ACCEPTANCE)\.md$/,
+  // Marketing: the internal claim checklist and the asset / video build tools (machine-specific
+  // paths, not part of the plugin). The rendered assets and the public marketing docs are kept.
+  /^docs\/marketing\/FEATURE_CHECKLIST\.md$/,
+  /^scripts\/marketing\//,
 ];
 
 const files = execFileSync('git', ['ls-files'], { encoding: 'utf8' }).split('\n').filter(Boolean);

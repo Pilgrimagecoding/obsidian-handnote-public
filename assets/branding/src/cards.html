@@ -1,0 +1,69 @@
+<!doctype html>
+<!-- Video title / end cards. Variant in the URL hash: title-wide, end-wide (1920x1080),
+     title-tall, end-tall (1080x1920); add "-zh" for Chinese (e.g. end-wide-zh).
+     Fonts: Inter / Inter Display, Noto Sans CJK SC (SIL OFL 1.1). -->
+<html><head><meta charset="utf-8">
+<style>
+:root{--violet:#6E56CF;--ink:#1F2328;--muted:#57606A;--paper:#FBFAF7;--rule:#E6E9EE;--hl:#F5D76E}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:100%;height:100%}
+body{font-family:Inter,"Noto Sans CJK SC",sans-serif;background:var(--paper);color:var(--ink);overflow:hidden;position:relative;
+  display:flex;align-items:center;justify-content:center;text-align:center;-webkit-font-smoothing:antialiased}
+.rules{position:absolute;inset:0;background:repeating-linear-gradient(to bottom,transparent 0 59px,var(--rule) 59px 60px)}
+.c{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center}
+.brand{display:flex;align-items:center;gap:.4em;font-family:"Inter Display",Inter,sans-serif;font-weight:600}
+h1{font-family:"Inter Display",Inter,"Noto Sans CJK SC",sans-serif;font-weight:700;letter-spacing:-.025em;line-height:1.08}
+body.zh h1{font-family:"Noto Sans CJK SC",sans-serif;letter-spacing:.01em;line-height:1.25}
+h1 .mark{position:relative;white-space:nowrap}
+h1 .mark svg{position:absolute;left:-.1em;bottom:.02em;width:calc(100% + .2em);height:.42em;z-index:-1}
+.sub{color:var(--muted);line-height:1.45}
+.install{font-weight:600;line-height:1.45}
+.install b{color:var(--violet)}
+.note{position:absolute;left:0;right:0;color:var(--muted);line-height:1.5}
+/* wide 1920x1080 */
+body.wide .brand{font-size:56px;margin-bottom:56px}
+body.wide .brand img{width:88px;height:88px}
+body.wide h1{font-size:104px;margin-bottom:36px}
+body.wide .sub{font-size:36px}
+body.wide .install{font-size:40px;margin-top:8px}
+body.wide .note{bottom:56px;font-size:22px}
+/* tall 1080x1920 */
+body.tall .brand{font-size:58px;margin-bottom:70px}
+body.tall .brand img{width:92px;height:92px}
+body.tall h1{font-size:104px;margin-bottom:44px}
+body.tall .sub{font-size:38px;padding:0 70px}
+body.tall .install{font-size:40px;padding:0 60px}
+body.tall .note{bottom:110px;font-size:26px;padding:0 80px}
+</style></head>
+<body>
+<div class="rules"></div>
+<div class="c">
+  <div class="brand"><img src="../icon-option-a.svg" alt="">HandNote</div>
+  <h1 id="h1"></h1>
+  <p class="sub" id="sub"></p>
+  <p class="install" id="install"></p>
+</div>
+<p class="note" id="note"></p>
+<script>
+const v = location.hash.slice(1) || 'title-wide';
+const [kind, shape] = v.split('-');
+const zh = v.endsWith('-zh');
+document.body.className = shape + (zh ? ' zh' : '');
+const mark = (t) => `<span class="mark">${t}<svg viewBox="0 0 100 20" preserveAspectRatio="none"><path d="M2 12 C 20 7, 45 15, 70 9 S 92 11, 98 8 L 98 17 C 80 19, 50 15, 25 19 S 6 18, 2 18 Z" fill="var(--hl)"/></svg></span>`;
+const br = shape === 'tall' ? '<br>' : ' ';
+const T = zh ? {
+  title: [`手写笔记，<br>就在${mark('你的仓库里')}。`, 'Obsidian 的手写笔记本页面', '', ''],
+  end: [`免费开源 · MIT`, '', 'Obsidian → 设置 → 第三方插件 →<br>浏览 → 搜索 <b>HandNote</b>',
+        'iPad 片段：Apple Pencil 实拍。桌面片段：Obsidian 1.14，笔迹由脚本回放。均为 HandNote 0.8.1，识别结果为插件真实输出。'],
+} : {
+  title: [`Your handwriting,<br>inside ${mark('your vault.')}`, 'Handwritten notebook pages for Obsidian', '', ''],
+  end: [`Free and open source`, 'MIT licence', `Obsidian → Settings → Community plugins →${br}Browse → <b>HandNote</b>`,
+        'iPad clips: real recordings with Apple Pencil. Desktop clips: Obsidian 1.14, handwriting played back by a script. HandNote 0.8.1; recognition results are the plugin’s real output.'],
+};
+const [h1, sub, install, note] = T[kind];
+document.getElementById('h1').innerHTML = h1;
+document.getElementById('sub').textContent = sub;
+document.getElementById('install').innerHTML = install;
+document.getElementById('note').textContent = note;
+</script>
+</body></html>

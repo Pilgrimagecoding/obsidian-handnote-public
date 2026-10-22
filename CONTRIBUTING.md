@@ -28,8 +28,8 @@ npm run build && npm run package && npm run check:release
 - Local recognition tests need the model files: `node scripts/fetch-local-assets.mjs` (downloads to
   `local-assets/`, which is ignored by Git).
 - Releases (maintainer): push a tag equal to `manifest.json` `version` (x.y.z, no "v"); CI
-  (`.github/workflows/release.yml`) builds, verifies and publishes `main.js`, `manifest.json`,
-  `styles.css` and `SHA256SUMS.txt`.
+  (`.github/workflows/release.yml`) builds, verifies and publishes `main.js`, `manifest.json` and
+  `styles.css` with build-provenance attestations; their SHA-256 values are in the release notes.
 
 ## Ground rules
 

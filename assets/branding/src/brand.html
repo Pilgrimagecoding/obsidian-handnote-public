@@ -1,0 +1,96 @@
+<!doctype html>
+<!-- HandNote brand layouts. Rendered with render.mjs; the variant is the URL hash:
+     hero-light / hero-dark / hero-zh-light / hero-zh-dark (1280x560) · social (1280x640) · thumb (1920x1080)
+     Fonts: Inter / Inter Display (SIL OFL 1.1). Screenshots: real Obsidian + HandNote 0.8.1. -->
+<html><head><meta charset="utf-8">
+<style>
+:root{--violet:#6E56CF;--violet-dark:#5746AF;--ink:#1F2328;--muted:#57606A;--paper:#FBFAF7;--rule:#E6E9EE;--hl:#F5D76E;--frame:#FFFFFF;--shadow:rgba(31,35,40,.16)}
+body.dark{--ink:#F3F2F7;--muted:#A9A6B8;--paper:#16151B;--rule:rgba(255,255,255,.055);--hl:#6E56CF;--frame:#2A2833;--shadow:rgba(0,0,0,.55)}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:100%;height:100%}
+body{font-family:Inter,"Noto Sans CJK SC",sans-serif;color:var(--ink);background:var(--paper);overflow:hidden;position:relative;
+  -webkit-font-smoothing:antialiased}
+.rules{position:absolute;inset:0;background:repeating-linear-gradient(to bottom,transparent 0 47px,var(--rule) 47px 48px);
+  -webkit-mask-image:linear-gradient(to right,#000 0%,rgba(0,0,0,.35) 55%,transparent 80%)}
+.wrap{position:absolute;inset:0;display:flex;align-items:center}
+.copy{position:relative;z-index:2}
+.brand{display:flex;align-items:center;gap:.42em;font-family:"Inter Display",Inter,sans-serif;font-weight:600;letter-spacing:-.01em}
+.brand img{display:block}
+h1{font-family:"Inter Display",Inter,sans-serif;font-weight:700;letter-spacing:-.025em;line-height:1.04}
+h1 .mark{position:relative;white-space:nowrap}
+h1 .mark svg{position:absolute;left:-.12em;right:-.1em;bottom:.02em;width:calc(100% + .22em);height:.42em;z-index:-1}
+body.dark h1 .mark svg path{opacity:.75}
+.sub{color:var(--muted);line-height:1.4;white-space:pre-line}
+.feat{color:var(--ink);font-weight:500;display:flex;flex-wrap:wrap;gap:.35em .9em}
+.feat span::before{content:"";display:inline-block;width:.42em;height:.42em;border-radius:50%;background:var(--violet);margin-right:.45em;vertical-align:.12em}
+.shot{position:absolute;z-index:1;border-radius:14px;overflow:hidden;background:var(--frame);
+  box-shadow:0 1px 0 rgba(0,0,0,.04),0 24px 60px var(--shadow),0 0 0 1px rgba(127,127,127,.18)}
+.shot img{display:block;width:100%}
+.foot{position:absolute;color:var(--muted);font-weight:500}
+
+body.zh h1{letter-spacing:.01em;line-height:1.2;font-family:"Noto Sans CJK SC",sans-serif;font-weight:700}
+body.zh .sub,body.zh .feat{font-family:Inter,"Noto Sans CJK SC",sans-serif}
+body.zh .feat{gap:.35em 1.1em}
+/* hero 1280x560 */
+body.hero .copy{left:72px;width:560px}
+body.hero .brand{font-size:30px;margin-bottom:34px}
+body.hero .brand img{width:46px;height:46px}
+body.hero h1{font-size:58px;margin-bottom:22px}
+body.hero .sub{font-size:20px;margin-bottom:26px;max-width:500px}
+body.hero .feat{font-size:16px;max-width:520px}
+body.hero .shot{left:690px;top:58px;width:640px}
+
+/* social 1280x640 (GitHub social preview; keep 40 px safe margin) */
+body.social .copy{left:80px;width:600px}
+body.social .brand{font-size:34px;margin-bottom:40px}
+body.social .brand img{width:54px;height:54px}
+body.social h1{font-size:66px;margin-bottom:26px}
+body.social .sub{font-size:23px;max-width:540px}
+body.social .shot{left:720px;top:84px;width:620px}
+body.social .foot{left:80px;bottom:48px;font-size:18px}
+
+/* video thumbnail 1920x1080 */
+body.thumb .copy{left:110px;width:820px}
+body.thumb .brand{font-size:52px;margin-bottom:56px}
+body.thumb .brand img{width:84px;height:84px}
+body.thumb h1{font-size:112px;margin-bottom:40px}
+body.thumb .sub{font-size:36px;max-width:760px}
+body.thumb .shot{left:1000px;top:150px;width:1000px;border-radius:20px}
+body.thumb .foot{left:110px;bottom:80px;font-size:26px}
+</style></head>
+<body>
+<div class="rules"></div>
+<div class="wrap">
+  <div class="copy">
+    <div class="brand"><img src="../icon-option-a.svg" alt="">HandNote</div>
+    <h1 id="h1"></h1>
+    <p class="sub" id="sub"></p>
+    <div class="feat" id="feat"></div>
+  </div>
+</div>
+<div class="shot"><img id="shot" alt=""></div>
+<div class="foot" id="foot"></div>
+<script>
+const v = location.hash.slice(1) || 'hero-light';
+const kind = v.split('-')[0];
+document.body.className = kind + (v.endsWith('dark') ? ' dark' : '') + (v.includes('-zh') ? ' zh' : '');
+const mark = (t) => `<span class="mark">${t}<svg viewBox="0 0 100 20" preserveAspectRatio="none"><path d="M2 12 C 20 7, 45 15, 70 9 S 92 11, 98 8 L 98 17 C 80 19, 50 15, 25 19 S 6 18, 2 18 Z" fill="var(--hl)"/></svg></span>`;
+const zh = v.includes('-zh');
+if (zh) document.documentElement.lang = 'zh-CN';
+const T = zh ? {
+  hero: [`手写笔记，<br>就在${mark('你的仓库里')}。`, 'Obsidian 的手写笔记本页面。\nApple Pencil、手指和鼠标都能写。',
+         ['套索编辑', '转换为文字', 'LaTeX 公式', '多页与纸张', '纯文件，无需账号']],
+} : {
+  hero: [`Your handwriting,<br>inside ${mark('your vault.')}`, 'Handwritten notebook pages for Obsidian.\nApple Pencil, touch and mouse.',
+         ['Lasso & edit', 'Convert to text', 'LaTeX formulas', 'Pages & paper styles', 'Plain files, no account']],
+  social: [`Your handwriting,<br>inside ${mark('your vault.')}`, 'Handwritten notebook pages for Obsidian.\nApple Pencil, touch and mouse.', []],
+  thumb: [`${mark('Handwriting')}<br>for Obsidian`, 'Write with Apple Pencil, touch or mouse. Pages stay as files in your vault.', []],
+};
+const [h1, sub, feat] = T[kind];
+document.getElementById('h1').innerHTML = h1;
+document.getElementById('sub').textContent = sub;
+document.getElementById('feat').innerHTML = feat.map((t) => `<span>${t}</span>`).join('');
+document.getElementById('foot').textContent = kind === 'hero' ? '' : 'Free and open source · MIT';
+document.getElementById('shot').src = 'shot-convert.png';
+</script>
+</body></html>

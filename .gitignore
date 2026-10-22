@@ -12,3 +12,9 @@ src/local/ort-embedded.generated.ts
 src/local/worker-src.generated.ts
 # build output: published as a release asset only (the private repository still tracks its copy)
 main.js
+# promo footage and rendered videos stay outside Git (docs/marketing/VIDEO_STORYBOARD.md)
+ipad-footage/
+handnote-video/
+*.mp4
+*.mov
+*.mkv

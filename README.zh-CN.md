@@ -1,43 +1,74 @@
-# HandNote（中文说明）
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Pilgrimagecoding/obsidian-handnote-public/HEAD/assets/branding/hero-zh-dark.png">
+  <img src="assets/branding/hero-zh-light.png" alt="HandNote：手写笔记，就在你的仓库里。Obsidian 的手写笔记本页面，Apple Pencil、手指和鼠标都能写。右侧是一张真实截图：一页课堂手写笔记和向量草图，其中四个手写汉字被套索圈选并转换成了文字。">
+</picture>
 
-HandNote 是一个 Obsidian 手写笔记插件，主要为 Apple Pencil 设计，也支持手指触控和鼠标。它提供压感笔、套索，可以把手写内容转换成可编辑的文字，识别在本机完成，不需要账号或 API 密钥。公式以 LaTeX 编辑。
+**HandNote** 为 [Obsidian](https://obsidian.md) 增加手写笔记本页面。用 Apple Pencil、手指或鼠标书写，用套索选择，在本机把手写转换成可编辑的文字；每一页都是你仓库（Vault）里的一个普通 `.handnote` 文件。
 
-> HandNote 是独立的第三方社区插件，与 Obsidian、MyScript、Goodnotes、Xmind、Excalidraw 均无隶属或合作关系。
+**[从 Obsidian 社区插件目录安装](https://community.obsidian.md/plugins/handnote)** ·
+[版本发布](https://github.com/Pilgrimagecoding/obsidian-handnote-public/releases) ·
+[English](README.md)
 
-## 功能
+## 像在纸上一样书写
 
-- **笔记本页面**（`.handnote` 文件）
-  - 纸张：A4 / A5 / A3 / Letter；背景可选空白、横线、方格、点阵。
-  - 一篇笔记可以有多页，在页面侧栏里拖动排序。
-  - 用 `![[笔记.handnote]]` 嵌入 Markdown。
-- **笔**：钢笔（真实压感）、铅笔、荧光笔、虚线 / 点线、图形笔（自动识别直线、箭头、圆、矩形）、激光笔。
-- **橡皮**：精确擦、局部擦、整笔擦，也可以只擦荧光笔。
-- **对象**：文本框、图片、图形与连线、可编辑公式、思维导图。
-- **套索**
-  - 可以自由圈选，也可以框选。
-  - 选中后可以移动、缩放、旋转、复制、剪切、改颜色、编组。
-  - 只圈住文字里的几个字时，只选中这几个字。
-- **手写转换**
-  - 套索圈选后点「转换 → 文字」，原地替换，一步就能撤销，还可以「还原笔迹」。
-  - 识别不确定的字会给出候选。
-  - 文字识别默认在本机运行；也可以改用 MyScript（需要你自己的密钥）。
-  - **公式**：本版本**不提供本机公式识别**。「转换 → 公式」会打开 LaTeX 编辑器（实时预览，笔迹可保留或替换），也可以用 MyScript（你自己的密钥）识别。
-  - 公式可以编辑、移动、缩放、复制，也可以复制为 Markdown（`$$…$$`）。
-- **AI 工具**（可选，需要你自己的服务商密钥）：把草图转成思维导图或流程图，识别图片中的文字。
-- **数据安全**
-  - 每次保存前，都会先检查文件是否被同步工具改过；被改过就另存冲突副本，不覆盖。
-  - 恢复日志和备份能保护没来得及保存的笔迹。
-  - 损坏的笔记或由新版本创建的笔记只读打开，永不覆盖。
+压感钢笔、铅笔、荧光笔、虚线 / 点线，自动把直线、箭头、圆和矩形画规整的图形笔，以及激光笔。纸张有 A4、A5、A3、Letter，背景可选空白、横线、方格或点阵。
+
+![Obsidian 中的一页课堂手写笔记：标题、小标题、两个公式、中英文各两行和一个向量草图，上方是打开的笔工具栏](assets/screenshots/desktop/01-handwriting.png)
+
+## 套索圈选，转换为文字
+
+用套索圈住手写内容，点「转换 → 文字」。笔迹在原位被替换成可编辑的文字（中文和英文），一步即可撤销；不确定的字会给出候选，也可以「还原笔迹」。识别**在本机运行**：运行库内置在插件中，文字模型只在你要求时下载一次（[详情](#本机识别与模型下载)）。
+
+![四个手写汉字被套索圈住并转换成文字，下方的条上显示候选字和「还原笔迹」](assets/screenshots/desktop/02-convert-to-text.png)
+
+## 公式用 LaTeX
+
+「转换 → 公式」会打开带实时预览的 LaTeX 编辑器：输入公式后，可以插入到手写旁边，或替换掉笔迹。公式是可编辑对象，可以移动、缩放，也可以复制为 Markdown（`$$…$$`）。手写公式识别可以通过 MyScript（你自己的密钥）完成；本插件不提供本机公式识别。
+
+![公式编辑器：左边是手写的方程，右边是输入的 LaTeX 和渲染预览，下方有「插入到旁边」和「替换手写」按钮](assets/screenshots/desktop/03-latex-formula.png)
+
+## 多页、纸张与对象
+
+一篇笔记可以有很多页，在页面侧栏里拖动排序。文本框、图片、带连线的图形和可编辑公式与笔迹放在同一页上；套索可以移动、缩放、旋转、改色和编组它们。
+
+![页面侧栏里有三页缩略图（横线、方格、点阵纸），旁边是打开的课堂笔记页](assets/screenshots/desktop/04-pages.png)
+
+## 就是仓库里的普通文件
+
+每篇笔记都是仓库里的一个 `.handnote` 文件，用你已有的同步方式同步。在任意 Markdown 笔记里用 `![[Lecture 3.handnote]]` 嵌入。不需要账号，插件也没有自己的服务器。保存很谨慎：先检查文件是否被同步工具改过，有恢复日志和备份，损坏的或由新版本创建的文件只读打开。
+
+![一篇线性代数的 Markdown 笔记，正文下方嵌入了手写的课堂笔记页](assets/screenshots/desktop/05-in-your-vault.png)
+
+## 快速开始
+
+1. 在 Obsidian 中：**设置 → 第三方插件 → 浏览**，搜索 **HandNote**，点 **安装**，再点 **启用**。（也可以打开[目录页面](https://community.obsidian.md/plugins/handnote)，点 **Add to Obsidian**。）
+2. 新建笔记：运行命令 **New handwritten note**，或在文件夹上右键 → **新建 HandNote**。
+3. 开始书写。选择套索，圈住几个字，点「转换 → 文字」。第一次转换时，HandNote 会提示下载文字模型（先显示大小）；中文也可以直接使用内置的离线引擎，无需下载。
+
+手动安装：从[最新版本](https://github.com/Pilgrimagecoding/obsidian-handnote-public/releases/latest)下载 `main.js`、`manifest.json`、`styles.css`，放进 `<仓库>/.obsidian/plugins/handnote/`，然后启用 HandNote。每个文件的 SHA-256 写在版本说明里，版本还附有 GitHub 构建来源证明（attestation）。
 
 ## 平台支持
 
 | 平台 | 状态 |
 |---|---|
-| iPad + Apple Pencil | 主要目标平台：压感、240 Hz 采样、防误触、手指平移和缩放、双指撤销 |
-| Windows / macOS / Linux | 支持鼠标、数位板、触屏和快捷键 |
+| iPad（Obsidian iPadOS 版）+ Apple Pencil | 主要目标平台：压感、防误触、手指平移和缩放、双指撤销 |
+| Windows / macOS / Linux | 鼠标、数位板、触屏、快捷键 |
 | iPhone / Android | 没有使用桌面专用接口，理论上可用，但未测试 |
 
-最低 Obsidian 版本为 1.11.4（可选的 API 密钥要用到它的密钥存储功能）。
+需要 Obsidian 1.11.4 或更高版本。iPad / iPhone 上的本机识别需要 iPadOS / iOS 16.4 或更高版本。
+
+<details>
+<summary><strong>手势与快捷键</strong></summary>
+
+| 操作 | Pencil / 笔 | 手指 | 鼠标 / 键盘 |
+|---|---|---|---|
+| 书写 | 直接写 | —（除非打开「手指书写」） | 拖动 |
+| 平移 / 缩放 | — | 单指拖动 / 双指捏合 | 空格 + 拖动，Ctrl + 滚轮 |
+| 撤销 / 重做 | — | 双指 / 三指轻点 | Ctrl+Z / Ctrl+Shift+Z |
+| 编辑文字 | 轻点它（套索或文字工具） | 轻点它 | 单击它（套索或文字工具） |
+| 笔 ⇄ 橡皮 | — | 单指双击 | 1 / E |
+
+</details>
 
 ## 本机识别与模型下载
 
@@ -51,37 +82,40 @@ HandNote 是一个 Obsidian 手写笔记插件，主要为 Apple Pencil 设计�
 
 - **何时下载**：只有在「本地识别」里点某个包的「下载」，或者转换时在提示里确认下载，才会下载；下载前先显示大小。启动、安装、更新时都不会在后台下载。
 - **校验**：每个文件的大小和 SHA-256 都固定写在插件里，不一致就丢弃。模型不会自动更新：新模型只随新版插件提供，而且仍需你点击下载。
-- **存放位置**：本设备的应用存储（IndexedDB，按设备）。不放进 Vault，不会被同步。卸载插件不会删除模型，如需释放空间，请先在「本地识别」里删除。
+- **存放位置**：本设备的应用存储（IndexedDB，按设备）。不放进仓库，不会被同步。卸载插件不会删除模型，如需释放空间，请先在「本地识别」里删除。
 - **是否上传**：不上传任何内容。下载只是普通的文件请求（先发几个很短的 HEAD 请求找能连上的镜像）。本地识别时，笔记和笔迹不会离开设备。
 - **离线使用**：下载完成后无需联网即可识别。没有模型时，书写和其他功能照常可用；「转换 → 文字」可以使用内置的离线中文引擎。
 - 网络连不上下载源时，可以用「导入文件」从本地导入同样的文件（同样按哈希校验）。「运行自检」会显示本设备哪些功能可用、哪些镜像能连上。
-- 移动设备上的本地识别需要 iPadOS / iOS 16.4 或更高版本；更旧的系统可以使用 MyScript。
 
 ## 可选的云服务
 
 只有在你自己配置后才会联网：
 
-- **MyScript**：使用你自己的密钥。确认后，发送所选区域的笔迹坐标。费用按 MyScript 的条款。
-- **AI 服务商**：OpenAI、Anthropic、Google Gemini、DeepSeek、阿里云百炼 Qwen，或任意 OpenAI 兼容接口，使用你自己的密钥。确认后，发送所选区域的图片。费用按服务商的价格。
+- **MyScript**（设置 → HandNote → 识别）：使用你自己的密钥。确认后，发送所选区域的笔迹坐标，用于文字或公式识别。费用按 MyScript 的条款。
+- **AI 服务商**（设置 → HandNote → AI）：OpenAI、Anthropic、Google Gemini、DeepSeek、阿里云百炼 Qwen，或任意 OpenAI 兼容接口，使用你自己的密钥——把草图转成思维导图或流程图，或识别图片中的文字。确认后，发送所选区域的图片。费用按服务商的价格。
 
 密钥只保存在 Obsidian 的密钥存储中，不写进设置文件或笔记。
 
 ## 隐私
 
-插件没有遥测、没有统计、没有账号，也没有自己的服务器。所有联网行为（服务商、用途、发送的数据、费用、离线时的表现）都列在 [PRIVACY.md](PRIVACY.md)。
+没有遥测、没有统计、没有账号，也没有自己的服务器。所有联网行为（服务商、用途、发送的数据、费用、离线时的表现）都列在 [PRIVACY.md](PRIVACY.md)。
 
 ## 已知限制
 
-- **没有本机公式识别**：目前还没有许可条款明确的手写公式模型可以随插件提供。请用 LaTeX 输入公式，或使用 MyScript（你自己的密钥）。任何版本的 HandNote 创建的含公式笔记都可以正常打开和编辑。
-- 字写得特别小、笔迹比较特殊，或者一行里混写多种文字时，识别会差一些。不确定的结果会给出候选，在你选定之前保留原笔迹。
-- 用新版本 HandNote 创建的笔记，在旧版本里只能只读打开。请在所有设备上更新插件。
+- **没有本机公式识别。** 请用 LaTeX 输入公式，或使用 MyScript（你自己的密钥）。任何版本的 HandNote 创建的含公式笔记都可以正常打开和编辑。
+- 识别模型针对一般手写训练：字写得特别小、笔迹比较特殊，或者一行里混写多种文字时，识别会差一些。不确定的结果会给出候选，在你选定之前保留原笔迹。
+- 用新版本 HandNote 创建的笔记，在旧版本里只能只读打开。请在所有编辑同一批笔记的设备上更新插件。
+- 手机布局尚未优化。
 - 因为识别运行库内置在插件中，`main.js` 约 5.9 MB。Obsidian Sync 标准版不同步超过 5 MB 的文件，使用标准版时请在每台设备上从「第三方插件」安装 HandNote（笔记本身照常同步）。
+
+更多问答：[FAQ.md](FAQ.md)。
 
 ## 反馈
 
-- 问题和建议：GitHub Issues（请不要附上私人笔记或密钥）。
-- 安全问题：见 [SECURITY.md](SECURITY.md)。
+问题和建议：[GitHub Issues](https://github.com/Pilgrimagecoding/obsidian-handnote-public/issues)（请不要附上私人笔记或密钥）。安全问题：见 [SECURITY.md](SECURITY.md)。
 
 ## 许可
 
 HandNote 自己的代码采用 [MIT](LICENSE) 许可。他人的作品保留各自的许可，**不**属于 HandNote 的 MIT 许可：`main.js` 内的 ONNX Runtime Web（MIT，© Microsoft Corporation）、`main.js` 内的中文笔画数据（Arphic Public License，见 `vendor/hanzi-mmah/`），以及可选下载的模型和字体（Apache-2.0、SIL OFL 1.1）。详情与许可全文见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+HandNote 是独立的社区插件，与 Obsidian、MyScript、Goodnotes、Xmind、Excalidraw 均无隶属、合作或背书关系。截图：Obsidian 桌面版 + HandNote 0.8.1，演示仓库。

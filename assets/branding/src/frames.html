@@ -1,0 +1,24 @@
+<!doctype html>
+<!-- Video backgrounds (footage is overlaid by ffmpeg into the slot). Variant in the URL hash:
+     wide (1920x1080, slot 1568x882 at 176,28) · tall (1080x1920, slot 1000x750 at 40,500). -->
+<html><head><meta charset="utf-8">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%}
+body{background:#FBFAF7;position:relative;overflow:hidden;font-family:"Inter Display",Inter,sans-serif;color:#1F2328}
+.rules{position:absolute;inset:0;background:repeating-linear-gradient(to bottom,transparent 0 59px,#ECEEF2 59px 60px)}
+.slot{position:absolute;border-radius:14px;background:#fff;box-shadow:0 0 0 1px rgba(31,35,40,.10),0 18px 50px rgba(31,35,40,.16)}
+.brand{position:absolute;display:flex;align-items:center;gap:.4em;font-weight:600}
+</style></head><body>
+<div class="rules"></div><div class="slot" id="slot"></div>
+<div class="brand" id="brand"><img src="../icon-option-a.svg" alt="" id="ic">HandNote</div>
+<script>
+const v = location.hash.slice(1) || 'wide';
+const s = document.getElementById('slot').style, b = document.getElementById('brand'), ic = document.getElementById('ic');
+if (v === 'wide') { Object.assign(s, { left: '176px', top: '28px', width: '1568px', height: '882px' }); b.remove(); }
+else {
+  Object.assign(s, { left: '40px', top: '500px', width: '1000px', height: '750px' });
+  Object.assign(b.style, { left: '0', right: '0', top: '150px', justifyContent: 'center', fontSize: '64px' });
+  Object.assign(ic.style, { width: '100px', height: '100px' });
+}
+</script></body></html>

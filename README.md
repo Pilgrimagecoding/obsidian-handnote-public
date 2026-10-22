@@ -1,54 +1,87 @@
-# HandNote
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Pilgrimagecoding/obsidian-handnote-public/HEAD/assets/branding/hero-dark.png">
+  <img src="assets/branding/hero-light.png" alt="HandNote — Your handwriting, inside your vault. Handwritten notebook pages for Obsidian with Apple Pencil, touch and mouse. Beside the text, a real screenshot: a lecture page with handwritten notes and a vector sketch; four handwritten Chinese characters are selected with the lasso and converted to text.">
+</picture>
 
-Handwritten notebook pages for [Obsidian](https://obsidian.md), made for the Apple Pencil and
-working with touch and mouse. Write with pressure-sensitive pens, select with a lasso, and convert
-handwriting into editable text — on your device, without an account or API key. Formulas are
-edited as LaTeX.
+**HandNote** adds handwritten notebook pages to [Obsidian](https://obsidian.md). Write with an
+Apple Pencil, a finger or a mouse, select with a lasso, turn handwriting into editable text on your
+device, and keep every page as a plain `.handnote` file in your vault.
 
+**[Install from the Obsidian community directory](https://community.obsidian.md/plugins/handnote)** ·
+[Releases](https://github.com/Pilgrimagecoding/obsidian-handnote-public/releases) ·
 [中文说明](README.zh-CN.md)
 
-> HandNote is an independent, third-party community plugin. It is not made by, affiliated with or
-> endorsed by Obsidian, MyScript, Goodnotes, Xmind or Excalidraw.
+## Write like on paper
 
-![Handwriting converted to text on the device; the result stays selected with the lasso loop](docs/images/readme-lasso.png)
+Pressure-sensitive fountain pen, pencil, highlighter, dashed strokes, a shape pen that straightens
+lines, arrows, circles and rectangles, and a laser pointer. Pages come in A4, A5, A3 or Letter with
+blank, ruled, grid or dotted paper.
 
-## Features
+![A handwritten lecture page in Obsidian: title, heading, two equations, Chinese and English lines and a vector sketch, with the pen toolbar open](assets/screenshots/desktop/01-handwriting.png)
 
-- **Notebook pages** in `.handnote` files: A4 / A5 / A3 / Letter, blank, ruled, grid or dotted
-  paper, many pages per note, a page sidebar to reorder pages. Embed a note in Markdown with
-  `![[My note.handnote]]`.
-- **Pens**: fountain pen with real Apple Pencil pressure, pencil, highlighter, dashed and dotted
-  strokes, shape pen (lines, arrows, circles, rectangles are recognised as you draw), laser
-  pointer.
-- **Eraser**: precise, partial or whole-stroke; highlighter-only.
-- **Objects**: text boxes, images (vault attachments or embedded), shapes and connectors, editable
-  formulas, mind maps.
-- **Lasso**: free-form or rectangular. Move, resize, rotate, copy, cut, recolour, group. A loop
-  around part of a text picks just those characters.
-- **Convert handwriting** (lasso → Convert):
-  - **Text** (Chinese and English), in place, one undo step, with "Restore ink" and candidates for
-    uncertain characters. Recognition runs **on your device** after a one-time model download.
-  - **Math**: this version has **no on-device math recognition**. Convert → Math lets you type the
-    formula as LaTeX (with a live preview; the ink is kept or replaced, as you choose), or recognise
-    it with MyScript (your own keys).
-  - Formulas can be edited, moved, resized, copied and copied as Markdown (`$$…$$`).
-- **AI tools** (optional, your own provider key): turn a sketch into a mind map or a flowchart, read
-  text from a picture.
-- **Safe storage**: every save checks that the file was not changed by sync first; a recovery
-  journal and backups protect unsaved strokes; damaged or newer-format notes open read-only and are
-  never overwritten.
+## Lasso, then convert to text
+
+Draw a loop around handwriting and choose **Convert → Text**. The ink is replaced in place by
+editable text (Chinese and English), in one undo step, with candidates for uncertain characters and
+a **Restore ink** button. Recognition runs **on your device**: the runtime is built into the
+plugin, and the text models are downloaded once, when you ask ([details](#on-device-recognition-and-model-downloads)).
+
+![Four handwritten Chinese characters selected with a lasso loop and converted to text; a bar below shows the candidate characters and Restore ink](assets/screenshots/desktop/02-convert-to-text.png)
+
+## Formulas as LaTeX
+
+**Convert → Math** opens a LaTeX editor with a live preview: type the formula, then insert it next
+to your handwriting or replace the ink. Formulas stay editable objects you can move, resize and copy
+as Markdown (`$$…$$`). Handwritten-math recognition is available through MyScript with your own
+keys; this plugin has no on-device math recognition.
+
+![The formula editor: the handwritten equation on the left, the typed LaTeX and its rendered preview on the right, with buttons to insert beside or replace the handwriting](assets/screenshots/desktop/03-latex-formula.png)
+
+## Pages, paper and objects
+
+Many pages per note, reordered in the page sidebar. Text boxes, images, shapes with connectors and
+editable formulas sit on the page with your ink; the lasso moves, resizes, rotates, recolours and
+groups any of them.
+
+![The page sidebar with three page thumbnails — ruled, grid and dotted paper — next to the open lecture page](assets/screenshots/desktop/04-pages.png)
+
+## Plain files in your vault
+
+Every note is a `.handnote` file in your vault, synced by whatever you already use. Embed a page in
+any Markdown note with `![[Lecture 3.handnote]]`. No account, no server of its own. Saving is
+careful: it checks the file was not changed by sync first, keeps a recovery journal and backups,
+and opens damaged or newer-format files read-only.
+
+![A Markdown note about linear algebra with the handwritten lecture page embedded below the text](assets/screenshots/desktop/05-in-your-vault.png)
+
+## Get started
+
+1. In Obsidian: **Settings → Community plugins → Browse**, search for **HandNote**, then
+   **Install** and **Enable**. (Or open the [directory page](https://community.obsidian.md/plugins/handnote)
+   and press **Add to Obsidian**.)
+2. Create a note: the **New handwritten note** command, or right-click a folder → **New HandNote**.
+3. Write. Pick the lasso, circle a few words, press **Convert → Text**. The first time, HandNote
+   offers to download the text model (size shown first); Chinese also works with the built-in
+   offline engine, without any download.
+
+Manual install: copy `main.js`, `manifest.json` and `styles.css` from the
+[latest release](https://github.com/Pilgrimagecoding/obsidian-handnote-public/releases/latest) into
+`<vault>/.obsidian/plugins/handnote/` and enable HandNote. The SHA-256 of each file is in the
+release notes, and releases carry GitHub build-provenance attestations.
 
 ## Platforms
 
 | Platform | Status |
 |---|---|
-| iPad (Obsidian for iPadOS) with Apple Pencil | Primary target. Pressure, 240 Hz Pencil input, palm rejection, finger pan / pinch, two-finger undo. |
-| Windows / macOS / Linux desktop | Mouse, pen tablet, touch screen, keyboard shortcuts. |
-| iPhone / Android | Should work (no Node or Electron APIs are used), but is not tested. |
+| iPad (Obsidian for iPadOS) with Apple Pencil | Primary target: pressure, palm rejection, finger pan / pinch, two-finger undo |
+| Windows / macOS / Linux | Mouse, pen tablet, touch screen, keyboard shortcuts |
+| iPhone / Android | Should work (no desktop-only APIs are used) but is not tested |
 
-Minimum Obsidian version: 1.11.4 (secret storage for the optional API keys).
+Requires Obsidian 1.11.4 or newer. On-device recognition on iPad / iPhone needs iPadOS / iOS 16.4
+or newer.
 
-## Writing
+<details>
+<summary><strong>Gestures and shortcuts</strong></summary>
 
 | Action | Pencil / pen | Finger | Mouse / keyboard |
 |---|---|---|---|
@@ -58,14 +91,7 @@ Minimum Obsidian version: 1.11.4 (secret storage for the optional API keys).
 | Edit a text | tap it (lasso or text tool) | tap it | click it (lasso or text tool) |
 | Pen ⇄ eraser | — | double-tap with one finger | 1 / E |
 
-## Lasso and conversion
-
-1. Pick the lasso and draw a loop around handwriting. The loop stays as the outline of the
-   selection.
-2. Tap **Convert → Text**. The handwriting is replaced in place by editable text, about as large as
-   you wrote it. **Convert → Math** opens the LaTeX editor (or uses MyScript, if you set it up).
-3. The result stays selected: drag it, tap it to type, pick another candidate in the bar below it,
-   or press **Restore ink**.
+</details>
 
 ## On-device recognition and model downloads
 
@@ -73,7 +99,7 @@ Settings → HandNote → **Local recognition**. The recognition runtime (ONNX R
 is **built into the plugin**; it is never downloaded and starts only when you convert. The
 recognition **models are not built in**: each one is downloaded separately, and only when you ask.
 
-| Pack | Download size | Downloaded from (first mirror that answers) | Used for | Licence of the files |
+| Pack | Size | Downloaded from (first mirror that answers) | Used for | Licence |
 |---|---|---|---|---|
 | Chinese text — PaddleOCR PP-OCRv5 mobile rec (ONNX) + dictionary | 15.8 MB | PaddleOCR's official download (Baidu, paddle-model-ecology.bj.bcebos.com), Hugging Face `PaddlePaddle/PP-OCRv5_mobile_rec_onnx` (or hf-mirror.com); dictionary from the PaddleOCR GitHub repository (or its jsDelivr copy) | Chinese and mixed lines | Apache-2.0 (model card) |
 | English text — PaddleOCR en_PP-OCRv5 mobile rec (ONNX) + dictionary | 7.5 MB | as above (`en_PP-OCRv5_mobile_rec_onnx`) | English lines | Apache-2.0 (model card) |
@@ -95,53 +121,33 @@ recognition **models are not built in**: each one is downloaded separately, and 
   engine.
 - Blocked mirrors: **Import files** accepts the same files from disk (same hash check). **Run
   self-test** shows what works on this device and which mirrors answer.
-- Local recognition needs iPadOS / iOS 16.4 or newer on mobile devices (older systems can use
-  MyScript).
 
 ## Optional cloud services
 
 Nothing is sent anywhere unless you set it up yourself:
 
-- **MyScript** (Settings → HandNote → Recognition): enter your own MyScript keys. The strokes of a
-  selection are sent to MyScript after a confirmation. MyScript's terms and pricing apply.
+- **MyScript** (Settings → HandNote → Recognition): your own MyScript keys. The strokes of a
+  selection are sent to MyScript after a confirmation, for text or math. MyScript's terms and
+  pricing apply.
 - **AI providers** (Settings → HandNote → AI): OpenAI, Anthropic, Google Gemini, DeepSeek, Alibaba
-  Cloud Qwen, or any OpenAI-compatible endpoint, with your own key. A picture of the selection is
-  sent after a confirmation. The provider's pricing applies.
+  Cloud Qwen, or any OpenAI-compatible endpoint, with your own key — to turn a sketch into a mind
+  map or a flowchart, or read text from a picture. A picture of the selection is sent after a
+  confirmation. The provider's pricing applies.
 
 Keys are kept in Obsidian's secret storage, never in settings files or notes.
 
 ## Privacy
 
-No telemetry, no analytics, no account, no server of its own. The full list of network requests —
-service, purpose, data sent, cost, offline behaviour — is in [PRIVACY.md](PRIVACY.md).
-
-## Installation
-
-From Obsidian: Settings → Community plugins → Browse → search "HandNote" → Install → Enable.
-
-Manual: download `main.js`, `manifest.json` and `styles.css` from the
-[latest release](../../releases/latest) into `<vault>/.obsidian/plugins/handnote/`, then enable
-HandNote in Settings → Community plugins. Each release also has `SHA256SUMS.txt` to verify the files.
-
-## FAQ
-
-See [FAQ.md](FAQ.md). Short answers:
-
-- *Where are my notes?* In `.handnote` files in your vault, synced by whatever you use (Obsidian
-  Sync, iCloud, Remotely Save…).
-- *The model download hangs.* Run the self-test to see which mirrors your network reaches. Use
-  "Import files" if none does.
-- *English recognition is weak.* Install the English pack. Lines written in Latin script use it
-  automatically.
+No telemetry, no analytics, no account, no server of its own. Every network request — service,
+purpose, data sent, cost, offline behaviour — is listed in [PRIVACY.md](PRIVACY.md).
 
 ## Known limitations
 
-- **No on-device math recognition.** No handwritten-math model with clear licence terms is
-  included yet. Type formulas as LaTeX, or use MyScript with your own keys. Notes with formulas made
-  by any HandNote version open and edit normally.
-- Handwriting recognition is trained on general handwriting: unusual handwriting, very small
-  writing or mixed scripts in one line are read less reliably. Uncertain results are shown with
-  candidates, and the ink is kept until you choose.
+- **No on-device math recognition.** Type formulas as LaTeX, or use MyScript with your own keys.
+  Notes with formulas made by any HandNote version open and edit normally.
+- Recognition is trained on general handwriting: unusual or very small writing, or several scripts
+  in one line, are read less reliably. Uncertain results come with candidates, and the ink is kept
+  until you choose.
 - A note made with a newer HandNote opens read-only in an older one. Update HandNote on every
   device that edits the same notes.
 - Phone layouts are not optimised.
@@ -149,10 +155,12 @@ See [FAQ.md](FAQ.md). Short answers:
   plan does not sync files over 5 MB, so with that plan install HandNote on each device from
   Community plugins (your notes sync as usual).
 
+More answers: [FAQ.md](FAQ.md).
+
 ## Feedback
 
-Bugs and ideas: [issues](../../issues) (please do not attach private notes or keys). Security
-problems: see [SECURITY.md](SECURITY.md).
+Bugs and ideas: [GitHub issues](https://github.com/Pilgrimagecoding/obsidian-handnote-public/issues)
+(please do not attach private notes or keys). Security problems: [SECURITY.md](SECURITY.md).
 
 ## Licence
 
@@ -161,3 +169,7 @@ covered by HandNote's licence: ONNX Runtime Web inside `main.js` (MIT, © Micros
 the Chinese stroke data inside `main.js` (Arphic Public License, `vendor/hanzi-mmah/`), and the
 optional downloads (Apache-2.0, SIL OFL 1.1). Details and licence texts:
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+HandNote is an independent community plugin. It is not made by, affiliated with or endorsed by
+Obsidian, MyScript, Goodnotes, Xmind or Excalidraw. Screenshots: Obsidian desktop with HandNote
+0.8.1 in a demo vault.
