@@ -15,8 +15,12 @@ export const FORMAT_ID = 'obsidian-handnote';
  *      still written as version 1–3.
  *  5 — v0.5 files with formulas, mind maps or labelled flowchart shapes. Files without these are
  *      still written as version 1–4, so 0.4 keeps editing them.
+ *  6 — v0.9 files with imported document pages (a PDF / Office page shown under the ink, the
+ *      original file kept in the vault and referenced by `sources`). Files without them are still
+ *      written as version 1–5, so 0.8 keeps editing them; 0.8 opens a v6 file read-only instead of
+ *      dropping the page references on save.
  */
-export const FORMAT_VERSION = 5;
+export const FORMAT_VERSION = 6;
 /** Default geometry engine (v0.1 Baseline). */
 export const ENGINE_VERSION = 1;
 /** Fountain Pen Experimental (v0.2). */
@@ -71,11 +75,48 @@ export interface Asset {
   data: string;
 }
 
+/** Kinds of imported documents (0.9). */
+export type DocKind = 'pdf' | 'docx' | 'pptx' | 'xlsx' | 'doc';
+
+/**
+ * An imported document (v6). The original file stays a separate file in the vault; the note keeps
+ * only this reference (never the file's bytes). `sha256` + `size` identify the file again after a
+ * rename or move (see src/import/source.ts).
+ */
+export interface DocSource {
+  id: string;
+  kind: DocKind;
+  /** Vault path at the last successful open. */
+  path: string;
+  /** File name at import (shown when the file is missing). */
+  name: string;
+  size: number;
+  /** Lower-case hex SHA-256 of the file's bytes at import. */
+  sha256: string;
+  /** Number of pages / slides / sheets of the source. */
+  pages: number;
+  /** ms since epoch. */
+  imported: number;
+  /**
+   * Word / PowerPoint / Excel: vault path of the fixed page layout computed at import
+   * (`<file>.handnote-layout.json`, src/import/display-list.ts). PDF pages need none.
+   */
+  layout?: string;
+}
+
+/** The imported page shown under the ink of a page (v6): source id and 1-based page number. */
+export interface PageDoc {
+  src: string;
+  n: number;
+}
+
 export interface Page {
   id: string;
   width: number;
   height: number;
   background: PageBackground;
+  /** Imported document page painted under everything else (v6). Page units = the source's points. */
+  doc?: PageDoc;
   strokes: Stroke[];
   /** Text boxes, images and shapes (format v3). Painted: images, shapes, ink, then text. */
   items: Item[];
@@ -94,6 +135,8 @@ export interface HandNoteDocument {
   pages: Page[];
   /** Embedded images (v4), by id. Only assets referenced by an item are written to the file. */
   assets?: Record<string, Asset>;
+  /** Imported documents (v6), by id. Only sources referenced by a page are written. */
+  sources?: Record<string, DocSource>;
 }
 
 export interface PaperPreset {

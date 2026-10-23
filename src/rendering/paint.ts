@@ -1,3 +1,4 @@
+import { paintDocPage } from './doc-layer';
 import type { HandNoteDocument, Page, PageBackground, Stroke } from '../document/model';
 import type { GeometryCache } from '../document/geometry-cache';
 import { CanvasPathSink, emitGeometry } from '../ink/outline';
@@ -73,7 +74,9 @@ export function paintPaper(ctx: CanvasRenderingContext2D, page: Page, pxPerUnit:
   const bg = page.background;
   ctx.fillStyle = bg.paper;
   ctx.fillRect(0, 0, page.width, page.height);
-  if (texture) paintGrain(ctx, page.width, page.height, pxPerUnit);
+  // imported document page (v6) under the pattern and the ink; no paper grain over a document
+  const hasDoc = paintDocPage(ctx, page, pxPerUnit);
+  if (texture && !hasDoc) paintGrain(ctx, page.width, page.height, pxPerUnit);
   paintPattern(ctx, page.width, page.height, bg, pxPerUnit);
 }
 

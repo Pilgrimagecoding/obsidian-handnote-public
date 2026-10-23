@@ -65,6 +65,11 @@ export interface RouterHost {
   classified?(p: RouterPointer, owner: Owner, reason: string): void;
   /** A quick one-finger tap that did not move (object tools select / create with it). */
   tap?(p: RouterPointer): void;
+  /**
+   * One finger held still on the page for LONG_PRESS_MS (finger navigation only): the host opens
+   * its context menu there. The finger is consumed — it no longer pans, and lifting it is no tap.
+   */
+  longPress?(p: RouterPointer): void;
 }
 
 interface Contact {
@@ -90,6 +95,8 @@ export const PEN_GRACE_MS = 300;
 export const TENTATIVE_MS = 200;
 export const PAN_REVERT_MS = 500;
 export const TAP_MAX_MS = 320;
+/** A finger held still this long (and within TOUCH_SLOP) is a long press. */
+export const LONG_PRESS_MS = 500;
 export const STALE_CONTACT_MS = 6000;
 /** A drawing pen that sent nothing for this long is treated as lifted (its pointerup was lost). */
 export const STALE_PEN_MS = 4000;
@@ -137,6 +144,27 @@ export class InputRouter {
     if (nav.length >= 2) return 'TouchPinching';
     if (nav.length === 1) return this.panned ? 'TouchPanning' : 'TouchPending';
     return 'Idle';
+  }
+
+  /**
+   * The host's timer fired LONG_PRESS_MS after a finger went down: if that finger is still the only
+   * contact, has not moved beyond TOUCH_SLOP and no pen / palm / second finger is involved, it
+   * becomes a long press (returns true and calls host.longPress). The router itself has no timers,
+   * so this stays deterministic in tests.
+   */
+  longPressCheck(id: number, t: number): boolean {
+    const c = this.contacts.get(id);
+    if (!c || c.owner !== 'nav' || c.p.kind !== 'touch' || c.moved) return false;
+    if (this.contacts.size !== 1 || this.drawId !== null || this.mousePan) return false;
+    if (t - c.downAt < LONG_PRESS_MS) return false;
+    if (this.tap && (this.tap.max > 1 || this.tap.moved)) return false;
+    // consume the finger: no pan, no tap when it lifts; the camera has not moved (below slop)
+    c.owner = 'palm';
+    this.tap = null;
+    this.endNav(false);
+    this.host.classified?.(c.p, 'palm', 'long-press');
+    this.host.longPress?.({ ...c.p, t });
+    return true;
   }
 
   ownerOf(id: number): Owner | undefined {

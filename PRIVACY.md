@@ -4,6 +4,10 @@ HandNote is an Obsidian plugin that runs on your device. It has **no telemetry**
 accounts and no server of its own. Your notes are `.handnote` files in your vault; HandNote never
 uploads them.
 
+Importing documents (PDF, Word, PowerPoint, Excel) happens entirely on your device: the file is read
+and laid out locally, no macros run, remote images and links in the file are not loaded, and nothing
+is uploaded.
+
 The plugin goes online only for the features below, and only after you turn the feature on or press
 the button that starts it. Without a network connection, everything except these features keeps
 working.

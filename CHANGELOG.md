@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.9.0 — 2026-10-23
+
+Built from the same sources as the private test builds 0.9.0-beta.1 … beta.4 (tested on the iPad
+over three rounds), public edition. Release notes: `docs/release-notes/0.9.0.md`.
+
+- **Import documents to annotate**: PDF, Word (.docx, .doc), PowerPoint (.pptx) and Excel (.xlsx)
+  become HandNote pages of the same size. Office files are laid out once on import into a fixed
+  layout file beside the original (`.handnote-layout.json`, gzip-compressed above 1 MB) so every
+  device shows the same pages; PDF pages are rendered by Obsidian's own PDF.js. Original files are
+  kept unmodified in the vault (`HandNote imports` folder by default, de-duplicated by SHA-256) and
+  referenced from the note. No macros, no remote content, no upload.
+- Import UI: multi-file picker (choice order kept), stage-tagged error dialog with the real reason
+  (cloud placeholder, 0-byte file, web page or shortcut, old binary formats, iWork, OpenDocument,
+  encrypted files), progress and cancel for large files.
+- Rendering: document pages are cached per page; pinch zoom keeps on-screen pages and renders a
+  sharper version after the zoom settles; page thumbnails show the document.
+- **Finger long-press menu**: Paste, Paste from clipboard, Text box here, Insert image here
+  (right-click on desktop; Ctrl+V pastes).
+- File format: notes with imported pages are saved as format 6 (0.8.x opens them read-only); other
+  notes are unchanged.
+- New setting: Imported documents → folder for imported originals.
+
 ## 0.8.1 — 2026-10-22
 
 After the first community-directory scan (no change to writing, notes or recognition results):

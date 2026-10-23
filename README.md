@@ -28,6 +28,26 @@ plugin, and the text models are downloaded once, when you ask ([details](#on-dev
 
 ![Four handwritten Chinese characters selected with a lasso loop and converted to text; a bar below shows the candidate characters and Restore ink](assets/screenshots/desktop/02-convert-to-text.png)
 
+## Annotate PDF, Word, PowerPoint and Excel
+
+**Import document…** (command palette or the editor menu), or right-click a file in the file list
+→ **Annotate in HandNote**. Every page of the document becomes a HandNote page of the same size, and
+you write on it like on any other page.
+
+- **PDF** — rendered by the PDF engine that comes with Obsidian.
+- **Word** (.docx, and older .doc) — headings, styles, lists, tables, pictures and landscape
+  sections, laid out into fixed pages.
+- **PowerPoint** (.pptx) — one page per slide: backgrounds, shapes, text, pictures, groups, tables.
+- **Excel** (.xlsx) — printed on A4 pages like OneNote, cells at their real size, number formats,
+  fills, borders and merged cells. Formulas show the value saved in the file; HandNote does not
+  recalculate.
+
+The original file is kept unmodified in your vault (folder `HandNote imports` by default) and the
+note stores only a reference plus your ink. Macros never run, nothing is uploaded. What a file
+contains that HandNote cannot show (charts, animations, footnotes…) is listed when you import it.
+
+![A PowerPoint slide about eigenvalues imported into HandNote, with a highlighted bullet, a circled formula box and handwritten margin notes "exam!", "key idea" and "see page 2"](assets/screenshots/desktop/07-import-annotate.png)
+
 ## Formulas as LaTeX
 
 **Convert → Math** opens a LaTeX editor with a live preview: type the formula, then insert it next
@@ -41,7 +61,8 @@ keys; this plugin has no on-device math recognition.
 
 Many pages per note, reordered in the page sidebar. Text boxes, images, shapes with connectors and
 editable formulas sit on the page with your ink; the lasso moves, resizes, rotates, recolours and
-groups any of them.
+groups any of them. Long-press the page with a finger (right-click on desktop) to paste, add a text
+box or insert an image right there.
 
 ![The page sidebar with three page thumbnails — ruled, grid and dotted paper — next to the open lecture page](assets/screenshots/desktop/04-pages.png)
 
@@ -90,6 +111,7 @@ or newer.
 | Undo / redo | — | two- / three-finger tap | Ctrl+Z / Ctrl+Shift+Z |
 | Edit a text | tap it (lasso or text tool) | tap it | click it (lasso or text tool) |
 | Pen ⇄ eraser | — | double-tap with one finger | 1 / E |
+| Paste / add here | — | long-press the page | right-click, Ctrl+V |
 
 </details>
 
@@ -150,8 +172,13 @@ purpose, data sent, cost, offline behaviour — is listed in [PRIVACY.md](PRIVAC
   until you choose.
 - A note made with a newer HandNote opens read-only in an older one. Update HandNote on every
   device that edits the same notes.
+- Imported Word / PowerPoint / Excel files are re-laid out by HandNote, not by Microsoft Office:
+  page breaks and fonts can differ slightly, and charts, SmartArt, animations, headers / footers and
+  footnotes are not shown. Older .ppt / .xls must be saved as .pptx / .xlsx or PDF first. Office
+  files get a small `.handnote-layout.json` beside them — let your sync tool sync it.
+- Notes with imported pages use file format 6: HandNote 0.8.x opens them read-only.
 - Phone layouts are not optimised.
-- `main.js` is about 5.9 MB because the recognition runtime is built in. Obsidian Sync's Standard
+- `main.js` is about 6.2 MB because the recognition runtime is built in. Obsidian Sync's Standard
   plan does not sync files over 5 MB, so with that plan install HandNote on each device from
   Community plugins (your notes sync as usual).
 
@@ -171,5 +198,6 @@ optional downloads (Apache-2.0, SIL OFL 1.1). Details and licence texts:
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 HandNote is an independent community plugin. It is not made by, affiliated with or endorsed by
-Obsidian, MyScript, Goodnotes, Xmind or Excalidraw. Screenshots: Obsidian desktop with HandNote
-0.8.1 in a demo vault.
+Obsidian, MyScript, Goodnotes, Xmind, Excalidraw or Microsoft. Screenshots: Obsidian desktop with
+HandNote 0.8.1 in a demo vault (the import screenshot: HandNote 0.9.0); the handwriting in them is
+played back by a script.

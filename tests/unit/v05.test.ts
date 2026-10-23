@@ -479,7 +479,7 @@ test('0.5 codec: formulas, mind maps and labelled shapes round-trip as format 5;
   assert.equal(mm.root.children[0].id, root.children[0].id, 'topic ids kept');
   assert.equal((items[2] as ShapeItem).label?.text, '是否？');
   // a file from a newer plugin opens read-only
-  const newer = text.replace('"version":5', '"version":6');
+  const newer = text.replace('"version":5', '"version":7');
   assert.equal(parseDocument(newer).readOnly, true);
 });
 

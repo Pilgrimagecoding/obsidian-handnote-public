@@ -12,6 +12,8 @@ import {
   type PageBackground,
   type Stroke,
   type Asset,
+  type DocKind,
+  type DocSource,
   newId,
 } from './model';
 import { LINE_KINDS, fitConnector, normAngle, type Attachment, type Item, type ShapeKind, type TextAlign, type TextFont } from './items';
@@ -199,6 +201,7 @@ function itemNeedsV5(it: Item): boolean {
 /** Lowest format version that can represent the document (see FORMAT_VERSION). */
 export function requiredVersion(doc: HandNoteDocument): number {
   let v = 1;
+  if (doc.pages.some((p) => !!p.doc)) return 6;
   for (const p of doc.pages) {
     for (const it of p.items ?? []) {
       if (itemNeedsV5(it)) return 5;
@@ -226,7 +229,18 @@ export function referencedAssets(doc: HandNoteDocument): string[] {
   return ids;
 }
 
+/** Sources referenced by a page (only these are written). */
+export function referencedSources(doc: HandNoteDocument): DocSource[] {
+  const out: DocSource[] = [];
+  for (const p of doc.pages) {
+    const s = p.doc ? doc.sources?.[p.doc.src] : undefined;
+    if (s && !out.includes(s)) out.push(s);
+  }
+  return out;
+}
+
 export function serializeDocument(doc: HandNoteDocument): string {
+  const sources = referencedSources(doc);
   const header = {
     format: FORMAT_ID,
     version: doc.version > FORMAT_VERSION ? doc.version : requiredVersion(doc),
@@ -235,13 +249,15 @@ export function serializeDocument(doc: HandNoteDocument): string {
     modified: doc.modified,
     revision: doc.revision,
     device: doc.device,
+    // imported documents (v6) are in the header line, so line-based recovery keeps them
+    ...(sources.length ? { sources: sources.map((x) => ({ id: x.id, kind: x.kind, path: x.path, name: x.name, size: x.size, sha256: x.sha256, pages: x.pages, imported: x.imported, ...(x.layout ? { layout: x.layout } : {}) })) } : {}),
   };
   const lines: string[] = [];
   const h = JSON.stringify(header);
   lines.push(h.slice(0, -1) + ',');
   lines.push('"pages":[');
   doc.pages.forEach((page, pi) => {
-    const ph = JSON.stringify({ id: page.id, width: page.width, height: page.height, background: page.background });
+    const ph = JSON.stringify({ id: page.id, width: page.width, height: page.height, background: page.background, ...(page.doc ? { doc: { src: page.doc.src, n: page.doc.n } } : {}) });
     lines.push(ph.slice(0, -1) + ',"strokes":[');
     page.strokes.forEach((s, si) => {
       lines.push(strokeToJson(s) + (si < page.strokes.length - 1 ? ',' : ''));
@@ -518,13 +534,43 @@ function validatePageHeader(o: unknown): Page | null {
   const r = o as Record<string, unknown>;
   const width = num(r.width, 595);
   const height = num(r.height, 842);
+  const d = r.doc as Record<string, unknown> | undefined;
+  const doc = d && typeof d === 'object' && typeof d.src === 'string' && /^[\w-]{1,64}$/.test(d.src) && Number.isInteger(d.n) && (d.n as number) >= 1 && (d.n as number) <= 100000 ? { src: d.src, n: d.n as number } : undefined;
   return {
     id: str(r.id, newId('p')),
     width: width > 10 ? width : 595,
     height: height > 10 ? height : 842,
     background: validateBackground(r.background),
+    ...(doc ? { doc } : {}),
     strokes: [],
     items: [],
+  };
+}
+
+const DOC_KINDS: DocKind[] = ['pdf', 'docx', 'pptx', 'xlsx', 'doc'];
+
+/** One `sources` entry of the header (v6); anything malformed is dropped with a warning. */
+export function validateSource(o: unknown, warnings: string[]): DocSource | null {
+  if (!o || typeof o !== 'object') return null;
+  const r = o as Record<string, unknown>;
+  const id = str(r.id, '');
+  const kind = r.kind as DocKind;
+  const path = str(r.path, '');
+  if (!/^[\w-]{1,64}$/.test(id) || !DOC_KINDS.includes(kind) || !path || path.length > 1024) {
+    warnings.push('Skipped an imported document reference that could not be read');
+    return null;
+  }
+  const sha = str(r.sha256, '').toLowerCase();
+  return {
+    id,
+    kind,
+    path,
+    name: str(r.name, path.split('/').pop() ?? path).slice(0, 255),
+    size: Math.max(0, Math.floor(num(r.size, 0))),
+    sha256: /^[0-9a-f]{64}$/.test(sha) ? sha : '',
+    pages: Math.max(0, Math.floor(num(r.pages, 0))),
+    imported: num(r.imported, 0),
+    ...(typeof r.layout === 'string' && r.layout && r.layout.length <= 1024 ? { layout: r.layout } : {}),
   };
 }
 
@@ -564,6 +610,13 @@ function validateDocument(o: unknown, warnings: string[]): { doc: HandNoteDocume
       if (a) (assets ??= {})[a.id] = a;
     }
   }
+  let sources: Record<string, DocSource> | undefined;
+  if (Array.isArray(r.sources)) {
+    for (const so of r.sources.slice(0, 1000)) {
+      const x = validateSource(so, warnings);
+      if (x) (sources ??= {})[x.id] = x;
+    }
+  }
   return {
     doc: {
       format: FORMAT_ID,
@@ -575,6 +628,7 @@ function validateDocument(o: unknown, warnings: string[]): { doc: HandNoteDocume
       device: str(r.device, ''),
       pages,
       ...(assets ? { assets } : {}),
+      ...(sources ? { sources } : {}),
     },
     readOnly,
   };

@@ -4,6 +4,7 @@ import { GeometryCache } from '../document/geometry-cache';
 import type { HandNoteDocument } from '../document/model';
 import { renderPageToCanvas } from '../rendering/paint';
 import { preloadImages, registerAssets } from '../rendering/items-paint';
+import { ensureDocPage, registerSources } from '../rendering/doc-layer';
 import type HandNotePlugin from './main';
 import { EXTENSION } from './view';
 
@@ -109,6 +110,7 @@ export class EmbedManager {
       const text = await this.plugin.app.vault.cachedRead(file);
       const res = parseDocument(text);
       registerAssets(res.doc.assets);
+      registerSources(res.doc.sources);
       const entry = { mtime: file.stat.mtime, doc: res.doc, geo: new GeometryCache() };
       this.docCache.set(file.path, entry);
       return entry;
@@ -155,6 +157,8 @@ export class EmbedManager {
       renderPageToCanvas(canvas, page, data.geo, scale);
       canvas.style.aspectRatio = `${page.width} / ${page.height}`;
       if (page.items?.some((i) => i.type === 'image')) void preloadImages(page).then(() => renderPageToCanvas(canvas, page, data.geo, scale));
+      // an imported document page (PDF): render it, then repaint the embed once
+      if (page.doc) void ensureDocPage(page, scale).then(() => renderPageToCanvas(canvas, page, data.geo, scale));
     }
     const more = data.doc.pages.length - pages.length;
     const footer = box.createDiv({ cls: 'hn-embed-footer' });

@@ -62,6 +62,10 @@ export interface ObjectHost {
   editFormula(pageId: string, id: string): void;
   /** Copy plain text to the clipboard. */
   copyText(text: string): Promise<boolean>;
+  /** An object was copied (shared clipboard + system clipboard). */
+  copied?(page: Page, item: Item): void;
+  /** Long press on an empty spot (pen / mouse with an object tool): open the context menu. */
+  contextMenu?(r: PageRect, x: number, y: number): void;
 }
 
 interface Selection {
@@ -370,7 +374,12 @@ export class ObjectController {
 
   /** Long press on empty page: offer "Paste" when the clipboard has something. */
   longPressAt(r: PageRect, x: number, y: number): void {
-    if (!this.clipboard.length || this.h.readOnly()) return;
+    if (this.h.readOnly()) return;
+    if (this.h.contextMenu) {
+      this.h.contextMenu(r, x, y);
+      return;
+    }
+    if (!this.clipboard.length) return;
     this.hidePaste();
     const s = this.toScreen(r, x, y);
     const b = el('button', 'hn-paste-bubble hn-ov-int', this.overlay);
@@ -847,7 +856,9 @@ export class ObjectController {
 
   copySelected(): void {
     const f = this.find();
-    if (f) this.clipboard = [f.item];
+    if (!f) return;
+    this.clipboard = [f.item];
+    this.h.copied?.(f.page, f.item);
   }
 
   cutSelected(): void {

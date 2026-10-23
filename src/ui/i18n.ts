@@ -1,4 +1,5 @@
 import { EN6, EN7, EN8, EN9, ZH6, ZH7, ZH8, ZH9 } from './i18n-v05';
+import { EN10, ZH10 } from './i18n-v09';
 
 /**
  * UI strings (Chinese / English). The language follows Obsidian's interface language (the plugin
@@ -672,6 +673,8 @@ Object.assign(ZH, ZH8);
 Object.assign(EN, EN8);
 Object.assign(ZH, ZH9);
 Object.assign(EN, EN9);
+Object.assign(ZH, ZH10);
+Object.assign(EN, EN10);
 
 let lang: 'zh' | 'en' | null = null;
 

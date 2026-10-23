@@ -78,8 +78,8 @@ test('format v3: pencil strokes, cut fragments and curve 4 require version 3; v2
   const back = parseDocument(serializeDocument(doc));
   assert.equal(back.doc.pages[0].strokes[0].tool, 'pencil');
   assert.equal(back.readOnly, false);
-  // a hypothetical v6 file opens read-only (v0.5 reads up to version 5)
-  const v5 = serializeDocument(doc).replace('"version":3', '"version":6');
+  // a hypothetical v7 file opens read-only (v0.9 reads up to version 6)
+  const v5 = serializeDocument(doc).replace('"version":3', '"version":7');
   assert.equal(parseDocument(v5).readOnly, true);
 });
 

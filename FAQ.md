@@ -83,6 +83,29 @@ Yes, once the packs are downloaded. MyScript and AI providers need a connection.
 Yes. A lasso loop around some characters selects just those. The text is split only when you move,
 recolour or delete them. Grouped pieces are edited as one text with the text tool.
 
+### Which documents can I import, and where do the files go?
+
+PDF, Word (.docx, .doc), PowerPoint (.pptx) and Excel (.xlsx): **Import document…** or right-click
+a file → **Annotate in HandNote**. A file picked from the device is copied once into the folder
+`HandNote imports` (Settings → HandNote → Imported documents; empty = Obsidian's attachment
+location); a file that is already in the vault is used where it is. The original is never modified,
+and importing the same file again does not copy it twice. Deleting a note does not delete the
+original.
+
+### An imported Word / PowerPoint / Excel page looks different from Office.
+
+HandNote lays the file out itself, without Office, so page breaks, fonts and line breaks can differ a
+little. Charts, SmartArt, animations, headers / footers and footnotes are not shown; the import
+lists what was left out. Excel formulas show the value saved in the file (HandNote does not
+recalculate). Old .ppt / .xls, Pages / Keynote / Numbers and password-protected files are refused
+with a reason: save them as .pptx / .xlsx or PDF.
+
+### What is the `.handnote-layout.json` file next to my document?
+
+The fixed layout HandNote computed when you imported a Word, PowerPoint or Excel file (compressed
+as `.json.gz` when large). It makes every device show exactly the same pages. Let your sync tool
+sync it; if it is missing, HandNote lays the document out again and tells you.
+
 ### Does HandNote send my handwriting anywhere?
 
 Not unless you set up MyScript or an AI provider, and then only the selection you convert, after a
@@ -91,7 +114,7 @@ confirmation. See [PRIVACY.md](PRIVACY.md).
 ### Does HandNote sync with Obsidian Sync?
 
 Your notes (`.handnote` files) sync like any other file. The plugin itself: `main.js` is about
-5.9 MB because the recognition runtime is built in, and Obsidian Sync's Standard plan does not sync
+6.2 MB because the recognition runtime is built in, and Obsidian Sync's Standard plan does not sync
 files over 5 MB. With that plan, install HandNote on each device from Community plugins.
 
 ### Does it work on iPhone or Android?

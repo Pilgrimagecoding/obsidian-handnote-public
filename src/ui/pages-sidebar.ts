@@ -63,6 +63,7 @@ export class PagesSidebar {
   private menu: HTMLElement | null = null;
   private menuCleanup: (() => void) | null = null;
   private io: IntersectionObserver | null = null;
+  private refreshQueued = false;
   private drag: DragState | null = null;
   private autoScroll = 0;
   private pendingRender = false;
@@ -158,6 +159,25 @@ export class PagesSidebar {
       onTap(add, () => this.m.onInsert(n));
     }
     this.list.scrollTop = scroll;
+  }
+
+  /**
+   * Redraw the thumbnails on screen whose content may have changed (an imported page finished
+   * rendering). Coalesced to one pass per frame; unchanged thumbnails are returned from the cache.
+   */
+  refreshThumbs(): void {
+    if (this.refreshQueued) return;
+    this.refreshQueued = true;
+    window.requestAnimationFrame(() => {
+      this.refreshQueued = false;
+      const top = this.list.scrollTop - 200;
+      const bottom = this.list.scrollTop + this.list.clientHeight + 200;
+      for (const box of Array.from(this.list.querySelectorAll<HTMLElement>('.hn-ps-cell .hn-ps-box'))) {
+        const cell = box.parentElement as HTMLElement;
+        if (!box.firstElementChild || cell.offsetTop + cell.offsetHeight < top || cell.offsetTop > bottom) continue;
+        this.fillThumb(box);
+      }
+    });
   }
 
   /** Highlight the current page without rebuilding (scrolling the document). */

@@ -232,7 +232,7 @@ test('v0.1 file edited with Baseline strokes stays version 1; adding an Experime
   assert.equal(r2.params.pressureCurve, 3);
   assert.equal(r2.params.typicalPressure, 0.3);
   assert.equal(back.doc.pages[0].strokes[3].params.pressureCurve, undefined, 'engine-1 params gain no new fields');
-  assert.equal(FORMAT_VERSION, 5, 'v0.5 reads up to version 5');
+  assert.equal(FORMAT_VERSION, 6, 'v0.9 reads up to version 6');
 });
 
 test('geometry of v0.1 strokes is the same before and after a v0.2 save', () => {

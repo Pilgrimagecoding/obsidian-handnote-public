@@ -39,6 +39,8 @@ import { defaultEditorSettings } from '../editor/settings';
 import { EmbedManager } from './embed';
 import { sanitizePluginSettings, type HandNotePluginSettings } from './plugin-settings';
 import { EXTENSION, HandNoteView, VIEW_TYPE } from './view';
+import { DocumentImporter, IMPORT_EXTENSIONS } from './import';
+import { ensureDocPage } from '../rendering/doc-layer';
 
 export default class HandNotePlugin extends Plugin {
   /** Markdown embeds of handwritten notes (exposed for tests: mount counter). */
@@ -49,6 +51,7 @@ export default class HandNotePlugin extends Plugin {
   recognition!: HandwritingRecognitionService;
   local!: LocalRecognition;
   handFont!: HandFont;
+  importer!: DocumentImporter;
   private settingsTimer: number | null = null;
 
   async onload(): Promise<void> {
@@ -141,6 +144,12 @@ export default class HandNotePlugin extends Plugin {
     }
 
     this.addRibbonIcon('pen-tool', 'New handwritten note', () => void this.createAndOpen());
+    this.importer = new DocumentImporter(this);
+    this.addCommand({
+      id: 'import-document',
+      name: 'Import document (PDF, Word, PowerPoint, Excel) for annotation',
+      callback: () => this.importer.open(this.app.workspace.getActiveViewOfType(HandNoteView)),
+    });
 
     this.addCommand({
       id: 'create',
@@ -172,6 +181,10 @@ export default class HandNotePlugin extends Plugin {
     // vault root). Uses the official file-menu event — no DOM patching.
     this.registerEvent(
       this.app.workspace.on('file-menu', (menu, file) => {
+        if (file instanceof TFile && IMPORT_EXTENSIONS.includes(file.extension.toLowerCase())) {
+          menu.addItem((item) => item.setTitle(t('annotateInHandNote')).setIcon('pen-tool').onClick(() => this.importer.annotate(file)));
+          return;
+        }
         if (!(file instanceof TFolder)) return;
         menu.addItem((item) => {
           item
@@ -289,6 +302,16 @@ export default class HandNotePlugin extends Plugin {
     if (this.settings.newNoteFolder) return this.settings.newNoteFolder;
     const f = context ?? this.app.workspace.getActiveFile();
     return f?.parent?.path && f.parent.path !== '/' ? f.parent.path : '';
+  }
+
+  /** Path for a new note named after something (import): settings folder or next to `context`. */
+  newNotePath(name: string, context: TFile | null): string {
+    return this.uniquePath(this.targetFolder(context), name);
+  }
+
+  async ensureFolderOf(path: string): Promise<void> {
+    const i = path.lastIndexOf('/');
+    await this.ensureFolder(i > 0 ? path.slice(0, i) : '');
   }
 
   private async ensureFolder(path: string): Promise<void> {
@@ -452,6 +475,7 @@ export default class HandNotePlugin extends Plugin {
     } else {
       const canvas = document.createElement('canvas');
       await preloadImages(page);
+      await ensureDocPage(page, 3);
       renderPageToCanvas(canvas, page, geo, 3);
       const blob: Blob | null = await new Promise((res) => canvas.toBlob(res, 'image/png'));
       canvas.width = 0;
@@ -658,6 +682,19 @@ class HandNoteSettingTab extends PluginSettingTab {
           s.editor.paperTexture = v;
           save();
         }),
+      );
+
+    new Setting(containerEl).setName('Imported documents').setHeading();
+    new Setting(containerEl)
+      .setName('Folder for imported originals')
+      .setDesc('A document picked from this device is kept once in this folder: the note stores only a reference to it and your annotations, never the file itself. Empty: the attachment location set in Obsidian. Files annotated where they already are in the vault are not copied.')
+      .addText((t) =>
+        t
+          .setValue(s.importFolder)
+          .onChange((v) => {
+            s.importFolder = v.trim().replace(/^\/+|\/+$/g, '');
+            save();
+          }),
       );
 
     new Setting(containerEl).setName('Images').setHeading();

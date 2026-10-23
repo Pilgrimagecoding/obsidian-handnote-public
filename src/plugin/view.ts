@@ -5,6 +5,8 @@ import { parseDocument, serializeDocument } from '../document/codec';
 import { createDocument, defaultBackground, newId, paperById, type HandNoteDocument } from '../document/model';
 import { conflictCopyPath, decideExternalChange, decideSave } from '../storage/sync-guard';
 import type HandNotePlugin from './main';
+import { registerSources } from '../rendering/doc-layer';
+import { t } from '../ui/i18n';
 
 export const VIEW_TYPE = 'handnote-view';
 export const EXTENSION = 'handnote';
@@ -165,6 +167,7 @@ export class HandNoteView extends FileView {
       menuActions: [
         { label: 'Export page as PNG', run: () => void this.plugin.exportPage(this, 'png') },
         { label: 'Export page as SVG', run: () => void this.plugin.exportPage(this, 'svg') },
+        { label: t('importDocument'), run: () => this.plugin.importer.open(this) },
         { label: 'Save now', run: () => void this.flush() },
         {
           label: 'Copy performance report',
@@ -180,6 +183,7 @@ export class HandNoteView extends FileView {
     });
     this.editor.setReadOnly(this.readOnly);
     this.editor.setStatus(this.readOnly ? 'readonly' : 'saved');
+    if (doc.sources) void this.plugin.importer?.checkSources(this);
     if (this.recovered) this.showRecoveredBanner();
   }
 
@@ -232,6 +236,14 @@ export class HandNoteView extends FileView {
   // ---------------------------------------------------------------------------------------------
   // Saving
   // ---------------------------------------------------------------------------------------------
+
+  /** A source reference of the note changed (file renamed / found again): save the new path. */
+  sourcesChanged(): void {
+    const d = this.doc;
+    if (d?.sources) registerSources(d.sources);
+    this.editor?.requestRedraw();
+    this.markDirty();
+  }
 
   private markDirty(): void {
     if (this.readOnly) return;

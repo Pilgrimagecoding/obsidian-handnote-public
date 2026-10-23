@@ -38,6 +38,10 @@ export interface LassoHost {
   tapItem?(r: PageRect, x: number, y: number): boolean;
   /** A new loop starts (object editing ends). */
   loopStart?(): void;
+  /** A selection was copied (the plain text of its text / formula items, possibly empty). */
+  copied?(plain: string): void;
+  /** Pen / mouse held still at the start of a loop: open the page context menu there. */
+  contextMenu?(r: PageRect, x: number, y: number): void;
 }
 
 export interface LassoSelection {
@@ -46,7 +50,7 @@ export interface LassoSelection {
   itemIds: Set<string>;
 }
 
-interface Clip {
+export interface Clip {
   strokes: Stroke[];
   items: Item[];
   assets: Record<string, Asset>;
@@ -85,6 +89,22 @@ let clipboard: Clip | null = null;
 
 export function lassoClipboard(): Clip | null {
   return clipboard;
+}
+
+/** Replace the shared clipboard (object copy, tests). */
+export function setLassoClipboard(c: Clip | null): void {
+  clipboard = c;
+}
+
+/** Plain text of copied objects (text boxes and formulas, top to bottom) for the system clipboard. */
+export function clipPlainText(items: readonly Item[]): string {
+  const parts: { y: number; x: number; s: string }[] = [];
+  for (const it of items) {
+    if (it.type === 'text' && it.text.trim()) parts.push({ y: it.y, x: it.x, s: it.latex ? `$${it.latex}$` : it.text });
+    else if (it.type === 'formula' && it.latex.trim()) parts.push({ y: it.y, x: it.x, s: `$$${it.latex}$$` });
+  }
+  parts.sort((a, b) => a.y - b.y || a.x - b.x);
+  return parts.map((p) => p.s).join('\n');
 }
 
 const PAD_PX = 8;
@@ -355,10 +375,11 @@ export class LassoController {
     this.drawPath();
     window.clearTimeout(this.longPress);
     this.longPress = window.setTimeout(() => {
-      if (this.pathPointer === pointerId && this.path.length < 4 && clipboard) {
+      if (this.pathPointer === pointerId && this.path.length < 4 && (clipboard || this.h.contextMenu)) {
         const pr = this.pathRect;
         this.cancelPath();
-        if (pr) this.showPaste(pr, x, y);
+        if (pr && this.h.contextMenu) this.h.contextMenu(pr, x, y);
+        else if (pr) this.showPaste(pr, x, y);
       }
     }, 600);
   }
@@ -644,6 +665,7 @@ export class LassoController {
     const all = this.h.assets();
     for (const it of f.items) if (it.type === 'image' && it.src.startsWith('asset:') && all[it.src.slice(6)]) assets[it.src.slice(6)] = all[it.src.slice(6)];
     clipboard = { strokes: f.strokes, items: f.items, assets, box: b };
+    this.h.copied?.(clipPlainText(f.items));
     this.h.notify(t('copiedN'));
   }
 

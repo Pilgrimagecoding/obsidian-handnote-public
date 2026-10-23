@@ -15,6 +15,12 @@ export interface HandNotePluginSettings {
   deviceId: string;
   /** AI conversion settings. Holds only the *names* of secrets, never an API key. */
   ai: AISettings;
+  /**
+   * Folder for originals imported from the device (PDF / Word / PowerPoint / Excel files picked in
+   * the system picker). Empty = Obsidian's attachment location. Files annotated where they already
+   * are in the vault are never copied.
+   */
+  importFolder: string;
 }
 
 export function defaultPluginSettings(): HandNotePluginSettings {
@@ -26,6 +32,7 @@ export function defaultPluginSettings(): HandNotePluginSettings {
     backupsPerNote: 5,
     deviceId: randomDeviceId(),
     ai: defaultAISettings(),
+    importFolder: 'HandNote imports',
   };
 }
 
@@ -41,5 +48,6 @@ export function sanitizePluginSettings(raw: unknown): HandNotePluginSettings {
     backupsPerNote: typeof r.backupsPerNote === 'number' && r.backupsPerNote >= 1 ? Math.min(50, Math.floor(r.backupsPerNote)) : d.backupsPerNote,
     deviceId: typeof r.deviceId === 'string' && r.deviceId.length > 4 ? r.deviceId : d.deviceId,
     ai: sanitizeAISettings(r.ai),
+    importFolder: typeof r.importFolder === 'string' ? r.importFolder.replace(/^\/+|\/+$/g, '').replace(/\.\.+/g, '.') : d.importFolder,
   };
 }

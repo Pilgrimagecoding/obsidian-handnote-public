@@ -2747,3 +2747,209 @@ t('beta.8 writing: touchcancel / touchend without touches during a Pencil stroke
   await page.waitForSelector('.hn-text-editor');
   assert(true, 'a finger tap later opens the text');
 });
+
+// =================================================================================================
+// 0.9 — finger long press: context menu and paste (desktop browser simulation; the iPad itself is a
+// separate manual acceptance, docs/MOBILE_CLIPBOARD_TESTS.md)
+// =================================================================================================
+
+/** Hold one finger still at a page point for `ms`, optionally moving it, then lift. */
+async function fingerHold(page, x, y, { ms = 700, moveBy = 0, pointerId = 31, lift = true } = {}) {
+  await page.evaluate(
+    async ({ x, y, ms, moveBy, pointerId, lift }) => {
+      const ed = window.__hn.editor;
+      const v = document.querySelector('.hn-viewport');
+      const c = ed.pageToClient(0, x, y);
+      const mk = (type, dx = 0) =>
+        new PointerEvent(type, { bubbles: true, cancelable: true, pointerId, pointerType: 'touch', isPrimary: true, clientX: c.x + dx, clientY: c.y, pressure: 0.5, button: type === 'pointermove' ? -1 : 0, buttons: type === 'pointerup' ? 0 : 1, width: 40, height: 40 });
+      v.dispatchEvent(mk('pointerdown'));
+      if (moveBy) for (let i = 1; i <= 6; i++) v.dispatchEvent(mk('pointermove', (moveBy * i) / 6));
+      await new Promise((r) => setTimeout(r, ms));
+      if (lift) v.dispatchEvent(mk('pointerup', moveBy));
+      await new Promise((r) => requestAnimationFrame(r));
+    },
+    { x, y, ms, moveBy, pointerId, lift },
+  );
+}
+
+const menuLabels = (page) => page.$$eval('.hn-ctx-menu .hn-ctx-label', (els) => els.map((e) => e.textContent));
+const itemsOf = (page) => page.evaluate(() => window.__hn.editor.getDocument().pages[0].items.map((i) => ({ type: i.type, x: i.x, y: i.y, w: i.w, h: i.h, text: i.text })));
+
+t('0.9 long press: a still finger opens the context menu next to it; short tap, pan and pinch do not', async ({ page, base, assert, shot }) => {
+  await open(page, base, '?fresh&mode=pen');
+  await fingerHold(page, 300, 400, { ms: 150 });
+  assert(!(await page.$('.hn-ctx-menu')), 'quick tap: no menu');
+  await fingerHold(page, 300, 400, { ms: 700, moveBy: 40 });
+  assert(!(await page.$('.hn-ctx-menu')), 'finger that pans: no menu');
+  await fingerHold(page, 300, 400, { ms: 700 });
+  assert(await page.isVisible('.hn-ctx-menu'), 'still finger held 700 ms: menu open');
+  const labels = await menuLabels(page);
+  assert(labels.includes('Paste from clipboard') && labels.includes('Text box here') && labels.includes('Insert image here'), `entries: ${labels.join(' | ')}`);
+  const pos = await page.evaluate(() => {
+    const m = document.querySelector('.hn-ctx-menu').getBoundingClientRect();
+    const c = window.__hn.editor.pageToClient(0, 300, 400);
+    const root = document.querySelector('.hn-editor').getBoundingClientRect();
+    // the finger is at a corner of the menu (below-right, or flipped above / left near an edge)
+    const near = Math.min(Math.abs(m.left - c.x), Math.abs(m.right - c.x)) < 30 && Math.min(Math.abs(m.top - c.y), Math.abs(m.bottom - c.y)) < 30;
+    return { near, inside: m.left >= root.left && m.right <= root.right && m.top >= root.top && m.bottom <= root.bottom };
+  });
+  assert(pos.near && pos.inside, `menu next to the finger and inside the editor (${JSON.stringify(pos)})`);
+  await shot('v09-context-menu');
+  // the camera did not move during the long press
+  // the Pencil is never blocked: its first stroke closes the menu and draws
+  const n0 = await strokeCount(page);
+  await stroke(page, toSamples([[0, 0], [60, 10]], { x0: 120, y0: 600, scale: 1, speed: 150 }));
+  assert(!(await page.$('.hn-ctx-menu')), 'Pencil stroke closed the menu');
+  assert((await strokeCount(page)) === n0 + 1, 'and was drawn');
+  // two fingers held still: no menu (pinch / two-finger tap)
+  await page.evaluate(async () => {
+    const ed = window.__hn.editor;
+    const v = document.querySelector('.hn-viewport');
+    const a = ed.pageToClient(0, 200, 300);
+    const b = ed.pageToClient(0, 320, 300);
+    const mk = (type, id, c) => new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: id, pointerType: 'touch', isPrimary: id === 41, clientX: c.x, clientY: c.y, pressure: 0.5, buttons: type === 'pointerup' ? 0 : 1, width: 40, height: 40 });
+    v.dispatchEvent(mk('pointerdown', 41, a));
+    v.dispatchEvent(mk('pointerdown', 42, b));
+    await new Promise((r) => setTimeout(r, 700));
+    v.dispatchEvent(mk('pointerup', 42, b));
+    v.dispatchEvent(mk('pointerup', 41, a));
+  });
+  assert(!(await page.$('.hn-ctx-menu')), 'two fingers: no menu');
+});
+
+t('0.9 long press: Paste puts HandNote copies at the finger; undo / redo; Escape and outside taps close', async ({ page, base, assert }) => {
+  await open(page, base, '?fresh&mode=pen');
+  await stroke(page, toSamples([[0, 0], [80, 0]], { x0: 100, y0: 200, scale: 1, speed: 150 }));
+  await page.click('.hn-tool[data-group="lasso"]');
+  await path(page, loopAround(80, 180, 200, 230));
+  await page.evaluate(() => window.__hn.editor.lasso.copy());
+  await page.evaluate(() => window.__hn.editor.lasso.clear());
+  await page.click('.hn-tool[data-group="pen"]');
+  await page.waitForTimeout(400); // a finger right after the Pencil lifted is a palm (by design)
+  await fingerHold(page, 400, 600);
+  assert(await page.isVisible('.hn-ctx-menu'), 'menu open');
+  const labels = await menuLabels(page);
+  assert(labels[0] === 'Paste', `first entry is Paste (HandNote copy): ${labels.join(' | ')}`);
+  await page.click('.hn-ctx-menu .hn-ctx-item >> nth=0');
+  assert(!(await page.$('.hn-ctx-menu')), 'menu closed after the tap');
+  const p = await page0(page);
+  assert(p.strokes.length === 2, `pasted (${p.strokes.length} strokes)`);
+  const xs = p.strokes[1].samples.map((s) => s.x);
+  const ys = p.strokes[1].samples.map((s) => s.y);
+  const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+  const cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+  assert(Math.abs(cx - 400) < 6 && Math.abs(cy - 600) < 6, `centred on the long-press point (${cx.toFixed(1)}, ${cy.toFixed(1)})`);
+  await page.evaluate(() => window.__hn.editor.undo());
+  assert((await page0(page)).strokes.length === 1, 'undo removes the paste');
+  await page.evaluate(() => window.__hn.editor.redo());
+  assert((await page0(page)).strokes.length === 2, 'redo restores it');
+  await fingerHold(page, 300, 500);
+  assert(await page.isVisible('.hn-ctx-menu'), 'menu open again');
+  await page.keyboard.press('Escape');
+  assert(!(await page.$('.hn-ctx-menu')), 'Escape closes');
+  await fingerHold(page, 300, 500);
+  await page.mouse.click(30, 300);
+  assert(!(await page.$('.hn-ctx-menu')), 'a tap elsewhere closes');
+});
+
+t('0.9 paste from the system clipboard: text and image at the long-press point, saved; refusal is reported', async ({ page, base, assert, shot }) => {
+  await open(page, base, '?fresh&mode=pen');
+  // stand-in for navigator.clipboard (the real one needs a permission in a headless browser)
+  await page.evaluate(() => {
+    window.__clip = { mode: 'text', text: 'Pasted line one\nline two' };
+    const deny = () => {
+      const e = new Error('denied');
+      e.name = 'NotAllowedError';
+      return Promise.reject(e);
+    };
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: async () => undefined,
+        read: async () => {
+          if (window.__clip.mode === 'deny') return deny();
+          if (window.__clip.mode === 'image') {
+            const c = document.createElement('canvas');
+            c.width = 120;
+            c.height = 80;
+            const g = c.getContext('2d');
+            g.fillStyle = '#d33';
+            g.fillRect(0, 0, 120, 80);
+            const b = await new Promise((r) => c.toBlob(r, 'image/png'));
+            return [{ types: ['image/png'], getType: async () => b }];
+          }
+          const b = new Blob([window.__clip.text], { type: 'text/plain' });
+          return [{ types: ['text/plain'], getType: async () => b }];
+        },
+        readText: async () => (window.__clip.mode === 'deny' ? deny() : window.__clip.text),
+      },
+    });
+  });
+  const choose = async (label) => {
+    const items = await page.$$('.hn-ctx-menu .hn-ctx-item');
+    for (const it of items) if ((await it.textContent()).startsWith(label)) return it.click();
+    throw new Error('no entry ' + label);
+  };
+  await fingerHold(page, 150, 300);
+  await choose('Paste from clipboard');
+  await page.waitForFunction(() => window.__hn.editor.getDocument().pages[0].items.length === 1);
+  let items = await itemsOf(page);
+  assert(items[0].type === 'text' && items[0].text === 'Pasted line one\nline two', `text box with the clipboard text (${JSON.stringify(items[0].text)})`);
+  assert(Math.abs(items[0].x - 150) < 4 && Math.abs(items[0].y - 300) < 30, `at the long-press point (${items[0].x.toFixed(1)}, ${items[0].y.toFixed(1)})`);
+  assert(await page.evaluate(() => !!window.__hn.editor.lasso.selection), 'pasted text selected (movable with the lasso)');
+  await page.evaluate(() => window.__clip.mode = 'image');
+  await page.click('.hn-tool[data-group="pen"]');
+  await fingerHold(page, 400, 500);
+  await choose('Paste from clipboard');
+  await page.waitForFunction(() => window.__hn.editor.getDocument().pages[0].items.length === 2);
+  items = await itemsOf(page);
+  const img = items.find((i) => i.type === 'image');
+  assert(img && Math.abs(img.x + img.w / 2 - 400) < 4 && Math.abs(img.y + img.h / 2 - 500) < 4, `image centred at the point (${img && (img.x + img.w / 2).toFixed(1)})`);
+  const saved = await page.evaluate(() => window.__hn.serialize());
+  assert(saved.includes('Pasted line one') && /"src":"asset:/.test(saved), 'both saved in the note (image embedded as an asset, the default)');
+  await shot('v09-paste-system');
+  await page.evaluate(() => window.__clip.mode = 'deny');
+  await page.click('.hn-tool[data-group="pen"]');
+  await fingerHold(page, 300, 650);
+  await choose('Paste from clipboard');
+  await page.waitForSelector('.hn-toast, .hn-hint');
+  const toast = await page.textContent('.hn-toast, .hn-hint');
+  assert(/could not be read/.test(toast), `refusal reported: ${toast}`);
+  assert((await itemsOf(page)).length === 2, 'nothing pasted after a refusal');
+});
+
+t('0.9 keyboard paste (Ctrl+V): text and images from the paste event; HandNote copies come back as objects', async ({ page, base, assert }) => {
+  await open(page, base, '?fresh&mode=pen');
+  const firePaste = (data) =>
+    page.evaluate(async (data) => {
+      const dt = new DataTransfer();
+      if (data.text !== undefined) dt.setData('text/plain', data.text);
+      if (data.image) {
+        const c = document.createElement('canvas');
+        c.width = 60;
+        c.height = 40;
+        c.getContext('2d').fillRect(0, 0, 60, 40);
+        const b = await new Promise((r) => c.toBlob(r, 'image/png'));
+        dt.items.add(new File([b], 'shot.png', { type: 'image/png' }));
+      }
+      document.querySelector('.hn-viewport').focus();
+      document.querySelector('.hn-viewport').dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt }));
+      await new Promise((r) => setTimeout(r, 300));
+    }, data);
+  await firePaste({ text: 'from another app' });
+  let items = await itemsOf(page);
+  assert(items.length === 1 && items[0].text === 'from another app', 'text pasted');
+  await firePaste({ image: true });
+  items = await itemsOf(page);
+  assert(items.some((i) => i.type === 'image'), 'image pasted');
+  // a HandNote copy writes its plain text; pasting that text back restores the objects (ink too)
+  await page.click('.hn-tool[data-group="pen"]');
+  await page.click('.hn-pen-kind[data-kind="fountain"]').catch(() => undefined);
+  await stroke(page, toSamples([[0, 0], [80, 0]], { x0: 100, y0: 650, scale: 1, speed: 150 }));
+  await page.click('.hn-tool[data-group="lasso"]');
+  await path(page, loopAround(80, 630, 200, 680));
+  await page.evaluate(() => window.__hn.editor.lasso.copy());
+  const n0 = await strokeCount(page);
+  await firePaste({ text: '' });
+  assert((await strokeCount(page)) === n0 + 1, 'empty system text after a HandNote copy → the copied ink is pasted');
+});

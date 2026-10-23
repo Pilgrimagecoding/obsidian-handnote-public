@@ -12,11 +12,12 @@ import {
   newId,
   type Asset,
   type BackgroundKind,
+  type DocSource,
   type HandNoteDocument,
   type Page,
   type Stroke,
 } from '../document/model';
-import { arrowTangents, detachMissing, isLine, resolveConnectors, shapeTouchesCircle, transformItem, type ImageItem, type Item, type ShapeItem } from '../document/items';
+import { arrowTangents, detachMissing, isLine, resolveConnectors, shapeTouchesCircle, transformItem, type ImageItem, type Item, type ShapeItem, type TextItem } from '../document/items';
 import { quantizeSample } from '../document/codec';
 import { CanvasPathSink, emitStroke } from '../ink/outline';
 import { StrokeBuilder, buildStrokeGeometry } from '../ink/stroke-builder';
@@ -25,15 +26,19 @@ import { sanitizeExperimental, sanitizeParams, WIDTH_RANGE_MM } from '../ink/pre
 import { cutStroke } from '../ink/erase';
 import { recognizeArrowHead, recognizeShape } from '../ink/shape-recognition';
 import { PerfMonitor } from '../utils/perf';
-import { InputRouter, type RouterHost, type RouterPointer, type PointerKind } from '../input/input-router';
+import { InputRouter, LONG_PRESS_MS, type RouterHost, type RouterPointer, type PointerKind } from '../input/input-router';
 import { InputDiagnostics } from '../input/diagnostics';
 import { constrainCamera, previewTransform, screenToWorld, zoomAt, type Camera } from './camera';
 import { documentBounds, layoutPages, paintInkStroke, paintPageContent, paintPaper, renderPageToCanvas, type PageRect } from '../rendering/paint';
-import { assetDataUrl, onImageLoaded, pencilFill, primeImage, registerAssets } from '../rendering/items-paint';
+import { LINE_HEIGHT, TEXT_PAD, assetDataUrl, fitTextBox, onImageLoaded, pencilFill, primeImage, registerAssets } from '../rendering/items-paint';
 import { emitDashedGeometry } from '../rendering/dash';
+import { docPageReady, onDocLayerReady, registerSources, setDocPaintText } from '../rendering/doc-layer';
+import { documentPages } from '../import/pages';
 import { ERASER_SIZES, addPaletteColor, type EditorSettings, type PaperTone, type StrokeDash } from './settings';
 import { Toolbar, groupOf, type PenKind, type ToolGroup } from '../ui/toolbar';
-import { LassoController, transformStroke } from './lasso';
+import { LassoController, clipPlainText, lassoClipboard, setLassoClipboard, transformStroke } from './lasso';
+import { ContextMenu, type MenuEntry } from '../ui/context-menu';
+import { MAX_PASTE_IMAGE, cleanPastedText, fromDataTransfer, readSystemClipboard, samePlain, type ClipboardContent } from './system-clipboard';
 import { PagesSidebar } from '../ui/pages-sidebar';
 import { LaserPointer } from './laser';
 import { layoutSelection, type LayoutOp } from './layout';
@@ -102,6 +107,8 @@ const DOUBLE_TAP_PX = 60;
 
 /** Page copied from the navigator ("Copy" → "Paste after"); shared by all open notes. */
 let pageClipboard: Page | null = null;
+/** The imported document a copied page shows (pasting into another note brings the reference along). */
+let pageClipboardSource: DocSource | null = null;
 
 /** The part of the AI service the editor uses. */
 export interface AIBridge {
@@ -185,6 +192,16 @@ export class HandNoteEditor {
   private fileInput: HTMLInputElement;
   private popover: Popover | null = null;
   private popoverKind: string | null = null;
+  /** Long-press / right-click context menu (0.9). */
+  private ctxMenu: ContextMenu | null = null;
+  /** Plain text HandNote wrote to the system clipboard for its last copy (see samePlain). */
+  private clipStamp: string | null = null;
+  /** Where the next picked image goes (context menu "Insert image here"). */
+  private imageTarget: { pageId: string; x: number; y: number } | null = null;
+  /** Last pointer position over the viewport (keyboard paste goes there). */
+  private lastLocal: { x: number; y: number } | null = null;
+  /** A keyboard paste is expected (Ctrl/Cmd+V); the paste event handles it, else a fallback. */
+  private pasteFallback = 0;
   private hintShown = new Set<string>();
   mode: InputMode = 'pen';
 
@@ -239,7 +256,9 @@ export class HandNoteEditor {
     this.fileInput.addEventListener('change', () => {
       const f = this.fileInput.files?.[0];
       this.fileInput.value = '';
-      if (f) void this.insertImageFile(f);
+      const at = this.imageTarget;
+      this.imageTarget = null;
+      if (f) void this.insertImageFile(f, at ?? undefined);
     });
     const ctxOpts = { desynchronized: true, alpha: true } as CanvasRenderingContext2DSettings;
     this.sceneCtx = this.scene.getContext('2d', { alpha: false }) as CanvasRenderingContext2D;
@@ -269,6 +288,15 @@ export class HandNoteEditor {
       onEditStart: (ta) => this.onEditStart(ta),
       editFormula: (pageId, id) => this.editFormula(pageId, id),
       copyText: (text) => this.copyText(text),
+      copied: (page, item) => {
+        const assets: Record<string, Asset> = {};
+        const all = this.doc.assets ?? {};
+        if (item.type === 'image' && item.src.startsWith('asset:') && all[item.src.slice(6)]) assets[item.src.slice(6)] = all[item.src.slice(6)];
+        setLassoClipboard({ strokes: [], items: [item], assets, box: { x: item.x, y: item.y, w: item.w, h: item.h } });
+        void page;
+        this.writeClipStamp(clipPlainText([item]));
+      },
+      contextMenu: (r, x, y) => this.openContextMenu(r, x, y),
     });
     this.convertFlow = new ConvertFlow(
       {
@@ -340,11 +368,15 @@ export class HandNoteEditor {
         },
         tapItem: (r, x, y) => this.tapObjectWithLasso(r, x, y),
         loopStart: () => this.objects.deselect(),
+        copied: (plain) => this.writeClipStamp(plain),
+        contextMenu: (r, x, y) => this.openContextMenu(r, x, y),
       },
       this.objects.overlay,
     );
     this.laser = new LaserPointer(this.viewport, () => this.settings.laser);
     registerAssets(doc.assets);
+    registerSources(doc.sources);
+    setDocPaintText({ loading: t('docLoading'), missing: t('docMissing'), failed: t('docFailed') });
 
     this.perf.capabilities = probeCapabilities();
     this.diagnostics.setEnabled(settings.diagnostics);
@@ -356,6 +388,12 @@ export class HandNoteEditor {
     this.bindInput();
     this.disposers.push(onImageLoaded(() => this.requestScene(true)));
     this.disposers.push(onFormulaReady(() => this.requestScene(true)));
+    this.disposers.push(
+      onDocLayerReady(() => {
+        this.requestScene(true);
+        this.sidebar?.refreshThumbs();
+      }),
+    );
     this.relayout();
     this.resizeObs = new ResizeObserver(() => this.onResize());
     this.resizeObs.observe(this.viewport);
@@ -381,12 +419,18 @@ export class HandNoteEditor {
     this.lasso.clear();
     this.doc = doc;
     registerAssets(doc.assets);
+    registerSources(doc.sources);
     if (opts.resetHistory !== false) this.history.clear();
     this.relayout();
     if (!opts.keepCamera) this.fitWidth(0);
     else this.setCamera(this.cam);
     this.requestScene(true);
     this.updateToolbar();
+  }
+
+  /** Repaint everything (a document page's source changed). */
+  requestRedraw(): void {
+    this.requestScene(true);
   }
 
   setReadOnly(ro: boolean): void {
@@ -635,6 +679,8 @@ export class HandNoteEditor {
     if (this.destroyed) return;
     this.destroyed = true;
     this.closePopover();
+    this.closeContextMenu();
+    window.clearTimeout(this.pasteFallback);
     this.commitPending();
     // from here on no operation reaches the document (the stroke in progress was committed above)
     this.closed = true;
@@ -1013,8 +1059,19 @@ export class HandNoteEditor {
     const pin = () => this.pinScroll();
     for (const elx of [v, this.root, this.root.parentElement].filter(Boolean) as HTMLElement[]) on(elx, 'scroll', pin, { passive: true });
     on(v, 'contextmenu', (e) => {
-      if (!isOverlayTarget(e.target)) e.preventDefault();
+      if (isOverlayTarget(e.target)) return;
+      e.preventDefault();
+      // desktop right click: the same menu as a finger long press (touch long presses are handled
+      // by the router; a contextmenu event from a touch is ignored here)
+      if (e.pointerType === 'touch' || this.router.contactCount) return;
+      const l = this.localPoint(e);
+      const page = this.pageForPoint(l);
+      if (page) {
+        const w = screenToWorld(this.cam, l.x, l.y);
+        this.openContextMenu(page, w.x - page.x, w.y - page.y);
+      }
     });
+    on(document, 'paste', (e) => this.guard(() => this.onPasteEvent(e)));
     on(v, 'dblclick', (e) => e.preventDefault());
     on(document, 'keydown', (e) => this.onKey(e, true));
     on(document, 'keyup', (e) => this.onKey(e, false));
@@ -1072,13 +1129,25 @@ export class HandNoteEditor {
     if (isOverlayTarget(e.target)) return;
     this.pinScroll();
     this.closePopover();
+    this.closeContextMenu();
     const p = this.normalize(e);
+    this.lastLocal = { x: p.x, y: p.y };
     this.diagnostics.pointerDown(p);
     this.evt = e;
     const owner = this.router.down(p);
     this.evt = null;
     if (owner === null) return;
     e.preventDefault();
+    if (owner === 'nav' && p.kind === 'touch') {
+      // finger long press → context menu (the router decides whether the finger is still eligible)
+      const id = p.id;
+      window.setTimeout(() => {
+        if (this.destroyed) return;
+        this.guard(() => {
+          this.router.longPressCheck(id, performance.now());
+        });
+      }, LONG_PRESS_MS + 20);
+    }
     if (owner === 'ink' || owner === 'erase') this.blurEditors();
     try {
       this.viewport.setPointerCapture(e.pointerId);
@@ -1094,6 +1163,7 @@ export class HandNoteEditor {
       this.laser.hover(l.x, l.y);
       return;
     }
+    if (e.pointerType === 'mouse') this.lastLocal = this.localPoint(e);
     if (owner === undefined && !(this.navigating && e.pointerType === 'mouse')) return;
     if (owner !== undefined) e.preventDefault();
     this.evt = e;
@@ -1147,17 +1217,22 @@ export class HandNoteEditor {
     } else if (mod && k === 'c' && this.lasso.selection) {
       e.preventDefault();
       this.lasso.copy();
+    } else if (mod && k === 'c' && this.objects.selected) {
+      e.preventDefault();
+      this.objects.copySelected();
+      this.notify(t('copied'));
     } else if (mod && k === 'x' && this.lasso.selection) {
       e.preventDefault();
       this.lasso.cut();
     } else if (mod && k === 'v' && !this.readOnly) {
-      const r = this.rects[this.currentPageIndex()];
-      if (r) {
-        e.preventDefault();
-        if (this.settings.tool !== 'lasso') this.setTool('lasso');
-        const v = this.visibleRegion(r);
-        this.lasso.paste(r, [v.cx, v.cy]);
-      }
+      // Let the browser fire the paste event (it carries the system clipboard: text, images).
+      // If no paste event arrives (some hosts swallow it), paste HandNote's own copy instead.
+      window.clearTimeout(this.pasteFallback);
+      this.pasteFallback = window.setTimeout(() => {
+        if (this.destroyed || !lassoClipboard()) return;
+        const at = this.pastePoint();
+        if (at) this.pasteHandNote(at.r, at.x, at.y);
+      }, 250);
     } else if (e.key === 'Escape' && this.lasso.selection) {
       this.lasso.clear();
     } else if (!mod && !e.altKey && focused) {
@@ -1325,6 +1400,13 @@ export class HandNoteEditor {
       undo: () => this.undo(),
       redo: () => this.redo(),
       classified: (p, owner, reason) => this.diagnostics.classified(p, owner, reason),
+      longPress: (p) => {
+        if (this.readOnly) return;
+        const page = this.pageForPoint(p);
+        if (!page) return;
+        const l = this.localOn(page, p);
+        this.openContextMenu(page, l.x, l.y);
+      },
       tap: (p) => {
         // a finger tap on text (converted handwriting or a text box) types in it, whatever the tool
         if (this.tapToEdit(p)) return;
@@ -1766,8 +1848,12 @@ export class HandNoteEditor {
   }
 
   /** Insert an image file at the centre of the visible part of the current page. */
-  async insertImageFile(file: Blob & { name?: string }): Promise<void> {
+  async insertImageFile(file: Blob & { name?: string }, at?: { pageId: string; x: number; y: number }): Promise<void> {
     if (this.readOnly) return;
+    if (file.size > MAX_PASTE_IMAGE) {
+      this.notify(t('pasteImageTooLarge'));
+      return;
+    }
     try {
       const mime = file.type || 'image/png';
       const dataUrl = await blobToDataUrl(file);
@@ -1783,14 +1869,14 @@ export class HandNoteEditor {
         src = await this.host.saveImage(await file.arrayBuffer(), mime, file.name || 'image.png');
         primeImage(src, img);
       }
-      const idx = this.currentPageIndex();
-      const r = this.rects[idx];
+      const target = at ? this.rects.find((x) => x.page.id === at.pageId) : undefined;
+      const r = target ?? this.rects[this.currentPageIndex()];
       if (!r) return;
       const maxW = r.w * 0.6;
       const scale = Math.min(1, maxW / img.naturalWidth, (r.h * 0.5) / img.naturalHeight);
       const w = Math.max(20, img.naturalWidth * scale);
       const h = Math.max(20, img.naturalHeight * scale);
-      const view = this.visibleRegion(r);
+      const view = target && at ? { cx: at.x, cy: at.y } : this.visibleRegion(r);
       const cx = Math.min(r.w - w / 2, Math.max(w / 2, view.cx));
       const cy = Math.min(r.h - h / 2, Math.max(h / 2, view.cy));
       const item: ImageItem = { id: newId('i'), type: 'image', x: cx - w / 2, y: cy - h / 2, w, h, created: Date.now(), src, natW: img.naturalWidth, natH: img.naturalHeight };
@@ -2311,6 +2397,34 @@ export class HandNoteEditor {
     registerAssets(a);
   }
 
+  /** Make imported documents known to this note (pages refer to them by id). */
+  addSources(a: Record<string, DocSource>): void {
+    this.doc.sources = { ...(this.doc.sources ?? {}), ...a };
+    registerSources(a);
+  }
+
+  /**
+   * Insert the pages of an imported document after the current page (one undo step). Each page
+   * shows the document page under the ink; its size is the document page's size in points.
+   */
+  insertDocumentPages(source: DocSource, sizes: { width: number; height: number }[], at?: number): number {
+    if (this.readOnly || !sizes.length) return -1;
+    this.addSources({ [source.id]: source });
+    const index = at ?? (this.isBlankDocument() ? 0 : this.currentPageIndex() + 1);
+    const pages = documentPages(source, sizes);
+    const ops: Op[] = pages.map((page, i) => ({ kind: 'add-page', index: index + i, page }));
+    // an untouched single blank page (new note) is replaced by the document
+    if (this.isBlankDocument()) ops.push({ kind: 'remove-page', index: pages.length, page: this.doc.pages[0] });
+    this.pushOp(ops.length === 1 ? ops[0] : { kind: 'batch', ops });
+    this.gotoPage(index);
+    return index;
+  }
+
+  /** One empty page, no ink, no objects, no document. */
+  private isBlankDocument(): boolean {
+    return this.doc.pages.length === 1 && !this.doc.pages[0].strokes.length && !this.doc.pages[0].items.length && !this.doc.pages[0].doc;
+  }
+
   private selectGroup(pageId: string, g: string): void {
     const r = this.rects.find((x) => x.page.id === pageId);
     if (!r) return;
@@ -2363,7 +2477,9 @@ export class HandNoteEditor {
 
   private pageKey(page: Page): string {
     const last = page.strokes[page.strokes.length - 1];
-    return `${page.strokes.length}|${last?.id ?? ''}|${page.items.length}|${page.width}x${page.height}|${page.background.kind}|${page.background.paper}`;
+    // a document page's thumbnail is redrawn once the page has been rendered (it starts as a placeholder)
+    const doc = page.doc ? `|d${docPageReady(page.doc.src, page.doc.n) ? 1 : 0}` : '';
+    return `${page.strokes.length}|${last?.id ?? ''}|${page.items.length}|${page.width}x${page.height}|${page.background.kind}|${page.background.paper}${doc}`;
   }
 
   /**
@@ -2421,10 +2537,12 @@ export class HandNoteEditor {
         const pg = this.doc.pages[i];
         if (!pg) return;
         pageClipboard = clonePage(pg);
+        pageClipboardSource = pg.doc ? (this.doc.sources?.[pg.doc.src] ?? null) : null;
         this.notify(t('pageCopied'));
       },
       onPaste: (at) => {
         if (!pageClipboard || this.readOnly) return;
+        if (pageClipboard.doc && pageClipboardSource && !this.doc.sources?.[pageClipboard.doc.src]) this.addSources({ [pageClipboardSource.id]: pageClipboardSource });
         this.pushOp({ kind: 'add-page', index: at, page: clonePage(pageClipboard) });
         this.gotoPage(at);
       },
@@ -2668,6 +2786,183 @@ export class HandNoteEditor {
       this.notify(t('clipboardUnavailable'));
       return false;
     }
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Context menu and paste (0.9)
+  // ---------------------------------------------------------------------------------------------
+
+  private closeContextMenu(): void {
+    this.ctxMenu?.close();
+    this.ctxMenu = null;
+  }
+
+  /** Context menu at a page-local point (finger long press, pen long press, right click). */
+  openContextMenu(r: PageRect, x: number, y: number): void {
+    if (this.readOnly || this.destroyed) return;
+    this.closePopover();
+    this.closeContextMenu();
+    const clip = lassoClipboard();
+    const nav = navigator as Navigator & { clipboard?: { read?: unknown; readText?: unknown } };
+    const canRead = !!(nav.clipboard && (nav.clipboard.read || nav.clipboard.readText));
+    const entries: MenuEntry[] = [];
+    if (clip) {
+      const n = clip.strokes.length + clip.items.length;
+      entries.push({ icon: 'paste', label: t('ctxPasteHandNote'), hint: `${t('ctxPasteHandNoteHint')} · ${n}`, run: () => this.pasteHandNote(r, x, y) });
+    }
+    entries.push({
+      icon: 'paste',
+      label: t('ctxPasteSystem'),
+      hint: canRead ? t('ctxPasteSystemHint') : t('ctxPasteSystemUnsupported'),
+      disabled: !canRead,
+      // must start inside the tap: iPadOS only lets a user gesture read the clipboard
+      run: () => void this.pasteSystemAt(r, x, y),
+    });
+    entries.push({
+      icon: 'text',
+      label: t('ctxTextHere'),
+      hint: t('ctxTextHereHint'),
+      run: () => {
+        if (this.settings.tool !== 'text') this.setTool('text');
+        this.objects.createText(r, x, y);
+      },
+    });
+    entries.push({
+      icon: 'image',
+      label: t('ctxImageHere'),
+      run: () => {
+        this.imageTarget = { pageId: r.page.id, x, y };
+        this.pickImage();
+      },
+    });
+    const w = { x: r.x + x, y: r.y + y };
+    const sx = (w.x - this.cam.x) * this.cam.zoom;
+    const sy = (w.y - this.cam.y) * this.cam.zoom;
+    const vr = this.viewport.getBoundingClientRect();
+    const rr = this.root.getBoundingClientRect();
+    this.ctxMenu = new ContextMenu(this.root, sx + vr.left - rr.left, sy + vr.top - rr.top, entries, () => {
+      this.ctxMenu = null;
+    });
+  }
+
+  /** Remember (and write) the plain text of a HandNote copy. */
+  private writeClipStamp(plain: string): void {
+    this.clipStamp = plain;
+    try {
+      const c = navigator.clipboard;
+      if (c?.writeText) void c.writeText(plain).catch(() => undefined);
+    } catch {
+      /* no system clipboard: the in-memory copy still works */
+    }
+  }
+
+  /** Where a keyboard paste goes: the pointer over a page, else the middle of the visible page. */
+  private pastePoint(): { r: PageRect; x: number; y: number } | null {
+    if (this.lastLocal && this.pointerInside) {
+      const page = this.pageForPoint(this.lastLocal);
+      if (page) {
+        const l = this.localOn(page, this.lastLocal);
+        if (l.x >= 0 && l.y >= 0 && l.x <= page.w && l.y <= page.h) return { r: page, x: l.x, y: l.y };
+      }
+    }
+    const r = this.rects[this.currentPageIndex()];
+    if (!r) return null;
+    const v = this.visibleRegion(r);
+    return { r, x: v.cx, y: v.cy };
+  }
+
+  private pasteHandNote(r: PageRect, x: number, y: number): void {
+    if (!lassoClipboard() || this.readOnly) return;
+    if (this.settings.tool !== 'lasso') this.setTool('lasso');
+    this.lasso.paste(r, [x, y]);
+  }
+
+  /** Context menu "Paste from clipboard": read the system clipboard (inside the tap). */
+  private async pasteSystemAt(r: PageRect, x: number, y: number): Promise<void> {
+    const content = await readSystemClipboard();
+    if (this.destroyed) return;
+    await this.pasteContent(content, r, x, y);
+  }
+
+  /** Ctrl/Cmd+V or Edit → Paste while HandNote has the focus (or the pointer). */
+  private onPasteEvent(e: ClipboardEvent): void {
+    const tg = e.target as HTMLElement | null;
+    if (tg && (tg.isContentEditable || tg.tagName === 'INPUT' || tg.tagName === 'TEXTAREA' || tg.closest?.('.cm-editor'))) return;
+    const focused = this.viewport.contains(document.activeElement) || this.root.contains(document.activeElement);
+    if (!focused && !this.pointerInside) return;
+    window.clearTimeout(this.pasteFallback);
+    if (this.readOnly) return;
+    const at = this.pastePoint();
+    if (!at) return;
+    e.preventDefault();
+    void this.pasteContent(fromDataTransfer(e.clipboardData), at.r, at.x, at.y);
+  }
+
+  private async pasteContent(c: ClipboardContent, r: PageRect, x: number, y: number): Promise<void> {
+    if (this.readOnly) return;
+    const own = lassoClipboard();
+    switch (c.kind) {
+      case 'image': {
+        let k = 0;
+        for (const img of c.images.slice(0, 10)) {
+          await this.insertImageFile(img, { pageId: r.page.id, x: x + k * 24, y: y + k * 24 });
+          k++;
+        }
+        return;
+      }
+      case 'text':
+        // the text HandNote itself put there for its last copy: paste the full objects instead
+        if (own && samePlain(c.text, this.clipStamp)) this.pasteHandNote(r, x, y);
+        else this.insertTextAt(r, x, y, c.text);
+        return;
+      case 'empty':
+        if (own && this.clipStamp !== null) this.pasteHandNote(r, x, y);
+        else this.notify(t('clipboardEmpty'));
+        return;
+      case 'denied':
+        this.notify(t('clipboardDenied'));
+        return;
+      default:
+        this.notify(t('clipboardUnsupported'));
+    }
+  }
+
+  /** A pasted text becomes a text box at the point (wrapped to the page when long). One undo step. */
+  insertTextAt(r: PageRect, x: number, y: number, raw: string): TextItem | null {
+    if (this.readOnly) return null;
+    const { text, truncated } = cleanPastedText(raw);
+    if (!text.trim()) {
+      this.notify(t('clipboardEmpty'));
+      return null;
+    }
+    const s = this.settings.text;
+    const margin = 24;
+    const left = Math.max(margin / 2, Math.min(x, r.w - margin - s.size * 4));
+    const room = Math.max(s.size * 4, r.w - left - margin);
+    let item: TextItem = fitTextBox({
+      id: newId('i'),
+      type: 'text',
+      x: left,
+      y: Math.max(0, y - s.size * 0.75 - TEXT_PAD),
+      w: s.size * 2,
+      h: s.size * LINE_HEIGHT + TEXT_PAD * 2,
+      created: Date.now(),
+      text,
+      size: s.size,
+      color: s.color,
+      font: s.font,
+      bold: s.bold,
+      italic: s.italic,
+      align: s.align,
+      autoWidth: true,
+    });
+    if (item.w > room) item = fitTextBox({ ...item, autoWidth: false, w: room });
+    const before = r.page.items;
+    this.pushOp({ kind: 'set-items', pageId: r.page.id, before, after: [...before, item] });
+    if (this.settings.tool !== 'lasso') this.setTool('lasso');
+    this.lasso.setSelection({ pageId: r.page.id, strokeIds: new Set(), itemIds: new Set([item.id]) });
+    this.notify(truncated ? t('pastedTextTruncated') : t('pastedText'));
+    return item;
   }
 
   /** Align / distribute the lasso selection locally (one undo step). */
@@ -2971,6 +3266,7 @@ export function clonePage(src: Page): Page {
   const g = (x?: string) => (x ? (gMap.get(x) ?? (gMap.set(x, newId('g')), gMap.get(x))) : undefined);
   return {
     ...createPage(src.width, src.height, { ...src.background }),
+    ...(src.doc ? { doc: { ...src.doc } } : {}),
     strokes: src.strokes.map((s) => ({ ...s, id: newId('s'), ...(s.g ? { g: g(s.g) } : {}) })),
     items: src.items.map((it) => {
       const n = { ...it, id: idMap.get(it.id) as string, ...(it.g ? { g: g(it.g) } : {}) };

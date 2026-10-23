@@ -21,6 +21,19 @@
 
 ![四个手写汉字被套索圈住并转换成文字，下方的条上显示候选字和「还原笔迹」](assets/screenshots/desktop/02-convert-to-text.png)
 
+## 批注 PDF、Word、PowerPoint 和 Excel
+
+「导入文档…」（命令面板或编辑器菜单），或在文件列表里对文件右键 →「在 HandNote 中批注」。文档的每一页都会变成同样大小的 HandNote 页面，可以像普通页面一样书写。
+
+- **PDF**：用 Obsidian 自带的 PDF 引擎渲染。
+- **Word**（.docx 和旧版 .doc）：标题、样式、列表、表格、图片、横向分节，排成固定页面。
+- **PowerPoint**（.pptx）：每张幻灯片一页，包括背景、形状、文字、图片、组合、表格。
+- **Excel**（.xlsx）：像 OneNote 一样印在 A4 纸上，单元格保持原大小，显示数字格式、填充、边框、合并单元格。公式显示文件里保存的结果，HandNote 不会重新计算。
+
+原文件原样保存在仓库里（默认 `HandNote imports` 文件夹），笔记只保存引用和你的笔迹。不运行宏，不上传任何文件。导入时会列出文件中无法显示的内容（图表、动画、脚注等）。
+
+![一张关于特征值的 PowerPoint 幻灯片导入到 HandNote 后的样子：一条要点被荧光笔标出，公式框被圈住，旁边有手写批注 "exam!"、"key idea" 和 "see page 2"](assets/screenshots/desktop/07-import-annotate.png)
+
 ## 公式用 LaTeX
 
 「转换 → 公式」会打开带实时预览的 LaTeX 编辑器：输入公式后，可以插入到手写旁边，或替换掉笔迹。公式是可编辑对象，可以移动、缩放，也可以复制为 Markdown（`$$…$$`）。手写公式识别可以通过 MyScript（你自己的密钥）完成；本插件不提供本机公式识别。
@@ -29,7 +42,7 @@
 
 ## 多页、纸张与对象
 
-一篇笔记可以有很多页，在页面侧栏里拖动排序。文本框、图片、带连线的图形和可编辑公式与笔迹放在同一页上；套索可以移动、缩放、旋转、改色和编组它们。
+一篇笔记可以有很多页，在页面侧栏里拖动排序。文本框、图片、带连线的图形和可编辑公式与笔迹放在同一页上；套索可以移动、缩放、旋转、改色和编组它们。用手指长按页面（桌面版右键），可以在该位置粘贴、添加文本框或插入图片。
 
 ![页面侧栏里有三页缩略图（横线、方格、点阵纸），旁边是打开的课堂笔记页](assets/screenshots/desktop/04-pages.png)
 
@@ -67,6 +80,7 @@
 | 撤销 / 重做 | — | 双指 / 三指轻点 | Ctrl+Z / Ctrl+Shift+Z |
 | 编辑文字 | 轻点它（套索或文字工具） | 轻点它 | 单击它（套索或文字工具） |
 | 笔 ⇄ 橡皮 | — | 单指双击 | 1 / E |
+| 粘贴 / 在此添加 | — | 长按页面 | 右键、Ctrl+V |
 
 </details>
 
@@ -105,8 +119,10 @@
 - **没有本机公式识别。** 请用 LaTeX 输入公式，或使用 MyScript（你自己的密钥）。任何版本的 HandNote 创建的含公式笔记都可以正常打开和编辑。
 - 识别模型针对一般手写训练：字写得特别小、笔迹比较特殊，或者一行里混写多种文字时，识别会差一些。不确定的结果会给出候选，在你选定之前保留原笔迹。
 - 用新版本 HandNote 创建的笔记，在旧版本里只能只读打开。请在所有编辑同一批笔记的设备上更新插件。
+- 导入的 Word / PowerPoint / Excel 由 HandNote 自己重新排版，而不是 Microsoft Office：分页和字体可能略有不同，图表、SmartArt、动画、页眉页脚、脚注不显示。旧版 .ppt / .xls 需要先另存为 .pptx / .xlsx 或 PDF。Office 文件旁边会有一个小的 `.handnote-layout.json`，请让同步工具同步它。
+- 含导入页面的笔记使用文件格式 6，HandNote 0.8.x 只能只读打开。
 - 手机布局尚未优化。
-- 因为识别运行库内置在插件中，`main.js` 约 5.9 MB。Obsidian Sync 标准版不同步超过 5 MB 的文件，使用标准版时请在每台设备上从「第三方插件」安装 HandNote（笔记本身照常同步）。
+- 因为识别运行库内置在插件中，`main.js` 约 6.2 MB。Obsidian Sync 标准版不同步超过 5 MB 的文件，使用标准版时请在每台设备上从「第三方插件」安装 HandNote（笔记本身照常同步）。
 
 更多问答：[FAQ.md](FAQ.md)。
 
@@ -118,4 +134,4 @@
 
 HandNote 自己的代码采用 [MIT](LICENSE) 许可。他人的作品保留各自的许可，**不**属于 HandNote 的 MIT 许可：`main.js` 内的 ONNX Runtime Web（MIT，© Microsoft Corporation）、`main.js` 内的中文笔画数据（Arphic Public License，见 `vendor/hanzi-mmah/`），以及可选下载的模型和字体（Apache-2.0、SIL OFL 1.1）。详情与许可全文见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
-HandNote 是独立的社区插件，与 Obsidian、MyScript、Goodnotes、Xmind、Excalidraw 均无隶属、合作或背书关系。截图：Obsidian 桌面版 + HandNote 0.8.1，演示仓库。
+HandNote 是独立的社区插件，与 Obsidian、MyScript、Goodnotes、Xmind、Excalidraw、Microsoft 均无隶属、合作或背书关系。截图：Obsidian 桌面版 + HandNote 0.8.1，演示仓库（导入截图为 HandNote 0.9.0）；截图中的笔迹由脚本回放。
