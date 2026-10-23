@@ -11,6 +11,13 @@ device, and keep every page as a plain `.handnote` file in your vault.
 [Releases](https://github.com/Pilgrimagecoding/obsidian-handnote-public/releases) ·
 [中文说明](README.zh-CN.md)
 
+## One-minute tour
+
+https://github.com/user-attachments/assets/a0064f52-7d4f-4fa4-84c1-56af51b359ba
+
+iPad clips: real Apple Pencil recordings of HandNote 0.8.1. Desktop clips: the released 0.8.1 files,
+with the handwriting played back by a script (marked in the video).
+
 ## Write like on paper
 
 Pressure-sensitive fountain pen, pencil, highlighter, dashed strokes, a shape pen that straightens

@@ -9,6 +9,12 @@
 [版本发布](https://github.com/Pilgrimagecoding/obsidian-handnote-public/releases) ·
 [English](README.md)
 
+## 一分钟了解
+
+https://github.com/user-attachments/assets/b9c49b44-824b-40c1-82b0-6e2e1367528b
+
+iPad 片段：用 Apple Pencil 实拍的 HandNote 0.8.1。桌面片段：已发布的 0.8.1 文件，笔迹由脚本回放（视频中有标注）。
+
 ## 像在纸上一样书写
 
 压感钢笔、铅笔、荧光笔、虚线 / 点线，自动把直线、箭头、圆和矩形画规整的图形笔，以及激光笔。纸张有 A4、A5、A3、Letter，背景可选空白、横线、方格或点阵。

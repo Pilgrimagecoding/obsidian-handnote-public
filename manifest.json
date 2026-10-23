@@ -3,7 +3,7 @@
   "name": "HandNote",
   "version": "0.9.0",
   "minAppVersion": "1.11.4",
-  "description": "Write and draw by hand in notebook pages with Apple Pencil, touch or mouse, and convert handwriting into editable text, formulas, mind maps and flowcharts.",
+  "description": "Write by hand in notebook pages with Apple Pencil, touch or mouse, annotate PDF and Office documents, and convert handwriting to text on your device.",
   "author": "Yanzhe Shao",
   "authorUrl": "https://github.com/Pilgrimagecoding",
   "isDesktopOnly": false
