@@ -3,20 +3,24 @@
   <img src="assets/branding/hero-light.png" alt="HandNote — Your handwriting, inside your vault. Handwritten notebook pages for Obsidian with Apple Pencil, touch and mouse. Beside the text, a real screenshot: a lecture page with handwritten notes and a vector sketch; four handwritten Chinese characters are selected with the lasso and converted to text.">
 </picture>
 
-**HandNote** adds handwritten notebook pages to [Obsidian](https://obsidian.md). Write with an
-Apple Pencil, a finger or a mouse, select with a lasso, turn handwriting into editable text on your
-device, and keep every page as a plain `.handnote` file in your vault.
+**HandNote** is an [Obsidian](https://obsidian.md) community plugin for handwritten notes, made
+first for the iPad and Apple Pencil (a finger, a mouse or a pen tablet work too). Write in notebook
+pages, select with a lasso, convert handwriting to editable text on your device, and annotate PDF,
+Word, PowerPoint and Excel files by hand. Every page is a plain `.handnote` file in your vault. Free
+and open source (MIT).
 
 **[Install from the Obsidian community directory](https://community.obsidian.md/plugins/handnote)** ·
 [Releases](https://github.com/Pilgrimagecoding/obsidian-handnote-public/releases) ·
-[中文说明](README.zh-CN.md)
+[FAQ](FAQ.md) ·
+[中文说明](README.zh-CN.md) · [中文教程](docs/zh-CN/README.md)
 
 ## One-minute tour
 
 https://github.com/user-attachments/assets/a0064f52-7d4f-4fa4-84c1-56af51b359ba
 
 iPad clips: real Apple Pencil recordings of HandNote 0.8.1. Desktop clips: the released 0.8.1 files,
-with the handwriting played back by a script (marked in the video).
+with the handwriting played back by a script (marked in the video). A longer tour with the 0.9
+document import and a voice-over is [on YouTube](https://www.youtube.com/watch?v=XuCaMYtpDbQ).
 
 ## Write like on paper
 
@@ -107,6 +111,21 @@ release notes, and releases carry GitHub build-provenance attestations.
 
 Requires Obsidian 1.11.4 or newer. On-device recognition on iPad / iPhone needs iPadOS / iOS 16.4
 or newer.
+
+## Quick answers
+
+- **Is HandNote an Obsidian plugin?** Yes: a community plugin listed in Obsidian's official
+  directory (id `handnote`). It is made independently, not by the Obsidian team.
+- **Does it work on the iPad with an Apple Pencil?** Yes, that is the main target: pressure, palm
+  rejection, finger gestures for pan, zoom and undo.
+- **Can it convert handwriting to text?** Yes, Chinese and English, on your device, after a one-time
+  model download (15.8 MB / 7.5 MB). A built-in offline engine also reads neat Chinese.
+- **Can I annotate documents?** Yes, since 0.9.0: PDF, Word (.docx, .doc), PowerPoint (.pptx) and
+  Excel (.xlsx). The original file is not changed and nothing is uploaded.
+- **Is there on-device handwritten-math recognition?** No. Type formulas as LaTeX with a live
+  preview, or use MyScript with your own keys.
+- **Is it free?** Yes, MIT-licensed, with no account, subscription or telemetry. Optional cloud
+  services use your own keys.
 
 <details>
 <summary><strong>Gestures and shortcuts</strong></summary>

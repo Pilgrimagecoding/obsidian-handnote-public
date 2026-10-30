@@ -3,17 +3,22 @@
   <img src="assets/branding/hero-zh-light.png" alt="HandNote：手写笔记，就在你的仓库里。Obsidian 的手写笔记本页面，Apple Pencil、手指和鼠标都能写。右侧是一张真实截图：一页课堂手写笔记和向量草图，其中四个手写汉字被套索圈选并转换成了文字。">
 </picture>
 
-**HandNote** 为 [Obsidian](https://obsidian.md) 增加手写笔记本页面。用 Apple Pencil、手指或鼠标书写，用套索选择，在本机把手写转换成可编辑的文字；每一页都是你仓库（Vault）里的一个普通 `.handnote` 文件。
+**HandNote** 是 [Obsidian](https://obsidian.md) 的手写笔记插件，主要为 iPad 和 Apple Pencil 设计，也支持手指、鼠标和数位板。在笔记本页面上手写，用套索选择，在本机把手写转换成可编辑的文字，还可以导入 PDF、Word、PowerPoint、Excel 并手写批注。每一页都是你仓库（Vault）里的一个普通 `.handnote` 文件。免费开源（MIT 许可）。
 
 **[从 Obsidian 社区插件目录安装](https://community.obsidian.md/plugins/handnote)** ·
 [版本发布](https://github.com/Pilgrimagecoding/obsidian-handnote-public/releases) ·
+**[中文教程](docs/zh-CN/README.md)** ·
 [English](README.md)
 
 ## 一分钟了解
 
 https://github.com/user-attachments/assets/b9c49b44-824b-40c1-82b0-6e2e1367528b
 
-iPad 片段：用 Apple Pencil 实拍的 HandNote 0.8.1。桌面片段：已发布的 0.8.1 文件，笔迹由脚本回放（视频中有标注）。
+iPad 片段：用 Apple Pencil 实拍的 HandNote 0.8.1。桌面片段：已发布的 0.8.1 文件，笔迹由脚本回放（视频中有标注）。包含 0.9 文档导入和英文配音的完整版在 [YouTube](https://www.youtube.com/watch?v=XuCaMYtpDbQ)。
+
+## 中文教程
+
+[安装与配置](docs/zh-CN/install.md) · [iPad 与 Apple Pencil](docs/zh-CN/ipad-apple-pencil.md) · [手写转文字](docs/zh-CN/handwriting-to-text.md) · [文档导入与批注](docs/zh-CN/documents.md) · [公式](docs/zh-CN/formulas.md) · [常见问题](docs/zh-CN/faq.md) · [已知限制](docs/zh-CN/limitations.md)
 
 ## 像在纸上一样书写
 
@@ -75,6 +80,15 @@ iPad 片段：用 Apple Pencil 实拍的 HandNote 0.8.1。桌面片段：已发�
 | iPhone / Android | 没有使用桌面专用接口，理论上可用，但未测试 |
 
 需要 Obsidian 1.11.4 或更高版本。iPad / iPhone 上的本机识别需要 iPadOS / iOS 16.4 或更高版本。
+
+## 快速回答
+
+- **HandNote 是 Obsidian 插件吗？** 是。它收录在 Obsidian 官方社区插件目录（插件 ID `handnote`），由社区开发者独立开发，不是 Obsidian 官方出品。
+- **支持 iPad 和 Apple Pencil 吗？** 支持，这是主要目标平台：压感、防误触，手指平移、缩放和撤销。
+- **能把手写转成文字吗？** 能，中文和英文，在本机识别；第一次需要下载模型（中文 15.8 MB、英文 7.5 MB）。内置的离线中文识别不需要下载，适合工整中文。
+- **能批注文档吗？** 能，从 0.9.0 起支持 PDF、Word（.docx、.doc）、PowerPoint（.pptx）和 Excel（.xlsx）。原文件不会被修改，也不会上传。
+- **有本机手写公式识别吗？** 没有。可以用带实时预览的 LaTeX 输入公式，或用你自己的 MyScript 密钥。
+- **免费吗？** 免费，MIT 开源，没有账号、订阅和遥测。可选的云服务使用你自己的密钥。
 
 <details>
 <summary><strong>手势与快捷键</strong></summary>

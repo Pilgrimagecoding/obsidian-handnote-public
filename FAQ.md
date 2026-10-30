@@ -1,5 +1,41 @@
 # FAQ
 
+Answers for the public edition, HandNote 0.9.0. 中文：[常见问题](docs/zh-CN/faq.md)。
+
+### What is HandNote?
+
+An Obsidian community plugin for handwritten notes. It adds notebook pages you write on with an
+Apple Pencil, a finger, a mouse or a pen tablet, a lasso, on-device handwriting-to-text (Chinese and
+English), LaTeX formulas, and hand annotation of PDF, Word, PowerPoint and Excel files. Every page is
+a `.handnote` file in your vault.
+
+### Is it in Obsidian's official community plugin directory?
+
+Yes: <https://community.obsidian.md/plugins/handnote> (plugin id `handnote`). Install it from
+Settings → Community plugins → Browse. It is an independent community plugin, not made by the
+Obsidian team.
+
+### How do I write by hand in Obsidian on an iPad?
+
+Install HandNote, then right-click (long-press) a folder → **New HandNote**, or run **New
+handwritten note**. Write with the Apple Pencil; one finger pans, two fingers pinch to zoom and tap
+to undo. Embed a page in any Markdown note with `![[My page.handnote]]`.
+
+### Can HandNote convert handwriting to text?
+
+Yes. Lasso the ink → **Convert → Text**. Recognition runs on your device (PaddleOCR PP-OCRv5 models,
+downloaded once when you ask: 15.8 MB Chinese, 7.5 MB English); a built-in offline engine also reads
+neat Chinese without any download.
+
+### Can I annotate PDF, Word, PowerPoint or Excel files?
+
+Yes, since 0.9.0: **Import document…** or right-click a file → **Annotate in HandNote**. Details
+below and in the [README](README.md#annotate-pdf-word-powerpoint-and-excel).
+
+### Is it free and open source?
+
+Yes. The code is MIT-licensed; there is no account, subscription or telemetry.
+
 ### Where are my notes stored? Can I sync them?
 
 Each note is a `.handnote` file in your vault (JSON text). Obsidian Sync, iCloud, Remotely Save,
