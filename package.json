@@ -1,6 +1,6 @@
 {
   "name": "obsidian-handnote",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "description": "Apple Pencil-first handwriting plugin for Obsidian",
   "private": true,
   "author": "Yanzhe Shao",

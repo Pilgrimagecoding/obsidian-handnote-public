@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.1 — 2026-11-01
+
+Release notes: `docs/release-notes/0.9.1.md`.
+
+- Desktop pen tablets: Space + pen drag pans the page (it drew a stroke before); a pen button mapped
+  to the middle mouse button pans too. The router reports the pan pointer through `ownerOf()`, so
+  its moves are handled and a pan released outside the viewport ends.
+- Manifest description mentions document annotation.
+
 ## 0.9.0 — 2026-10-23
 
 Built from the same sources as the private test builds 0.9.0-beta.1 … beta.4 (tested on the iPad

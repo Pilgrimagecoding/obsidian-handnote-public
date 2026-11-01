@@ -168,6 +168,7 @@ export class InputRouter {
   }
 
   ownerOf(id: number): Owner | undefined {
+    if (this.mousePan?.id === id) return 'mouse-pan';
     return this.contacts.get(id)?.owner;
   }
 
@@ -288,6 +289,10 @@ export class InputRouter {
         return this.register(p, 'palm', 'second-draw-pointer');
       }
     }
+    // Desktop pen tablet (Wacom, Huion, XP-Pen…): Space + pen drag pans like Space + mouse drag,
+    // and a side button mapped to the middle button pans too, so the page can be moved without
+    // putting the pen down for the mouse.
+    if (this.spaceDown || p.button === 1) return this.startPan(p, this.spaceDown ? 'pen-space-drag' : 'pen-middle-button');
     // Palm landed before the pen: every navigating finger becomes a palm, and a pan that just
     // started is reverted so the page does not slide under the hand.
     const nav = this.navContacts();
@@ -303,15 +308,18 @@ export class InputRouter {
 
   private mouseDown(p: RouterPointer): Owner | null {
     this.stats.mouse++;
-    if (p.button === 1 || (p.button === 0 && this.spaceDown)) {
-      this.mousePan = { id: p.id, x: p.x, y: p.y, cam: this.host.getCamera() };
-      this.host.navStart();
-      this.host.classified?.(p, 'mouse-pan', p.button === 1 ? 'middle-button' : 'space-drag');
-      return 'mouse-pan';
-    }
+    if (p.button === 1 || (p.button === 0 && this.spaceDown)) return this.startPan(p, p.button === 1 ? 'middle-button' : 'space-drag');
     if (p.button !== 0) return null; // right button etc.: not handled
     if (this.drawId !== null || !this.host.canDrawAt(p)) return null;
     return this.beginDraw(p, 'mouse');
+  }
+
+  /** Space / middle-button drag with a mouse or a pen: pans the page, never draws. */
+  private startPan(p: RouterPointer, reason: string): Owner {
+    this.mousePan = { id: p.id, x: p.x, y: p.y, cam: this.host.getCamera() };
+    this.host.navStart();
+    this.host.classified?.(p, 'mouse-pan', reason);
+    return 'mouse-pan';
   }
 
   private touchDown(p: RouterPointer): Owner {

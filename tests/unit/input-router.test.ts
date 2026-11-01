@@ -434,6 +434,33 @@ test('Space + left drag pans; middle drag pans; neither draws', () => {
   assert.equal(r.state, 'Idle');
 });
 
+test('pen tablet: Space + pen drag pans instead of drawing; pen middle button pans', () => {
+  const { host, r } = setup();
+  r.setSpace(true);
+  assert.equal(r.down(ptr(1, 'pen', 100, 100)), 'mouse-pan');
+  assert.equal(r.ownerOf(1), 'mouse-pan');
+  assert.equal(r.state, 'MousePanning');
+  for (let i = 1; i <= 10; i++) {
+    tick(8);
+    r.move(ptr(1, 'pen', 100 - 4 * i, 100 - 6 * i));
+  }
+  r.up(ptr(1, 'pen', 60, 40, { buttons: 0 }));
+  r.setSpace(false);
+  assert.equal(host.committed, 0);
+  assert.ok(Math.abs(host.cam.x - 40) < 1e-9 && Math.abs(host.cam.y - 60) < 1e-9, JSON.stringify(host.cam));
+  assert.equal(r.state, 'Idle');
+  assert.equal(r.ownerOf(1), undefined);
+  // a side button mapped to the middle button
+  r.down(ptr(2, 'pen', 100, 100, { button: 1, buttons: 4 }));
+  r.move(ptr(2, 'pen', 100, 50, { button: -1, buttons: 4 }));
+  r.up(ptr(2, 'pen', 100, 50, { button: 1, buttons: 0 }));
+  assert.ok(Math.abs(host.cam.y - 110) < 1e-9);
+  assert.equal(host.committed, 0);
+  // Space released: the pen draws again
+  drag(r, 3, 'pen', 0, 0, 40, 40);
+  assert.equal(host.committed, 1);
+});
+
 test('right mouse button is not consumed', () => {
   const { r } = setup();
   assert.equal(r.down(ptr(1, 'mouse', 10, 10, { button: 2, buttons: 2 })), null);

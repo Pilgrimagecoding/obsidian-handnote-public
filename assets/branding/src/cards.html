@@ -54,11 +54,11 @@ const br = shape === 'tall' ? '<br>' : ' ';
 const T = zh ? {
   title: [`手写笔记，<br>就在${mark('你的仓库里')}。`, 'Obsidian 的手写笔记本页面', '', ''],
   end: [`免费开源 · MIT`, '', 'Obsidian → 设置 → 第三方插件 →<br>浏览 → 搜索 <b>HandNote</b>',
-        'iPad 片段：Apple Pencil 实拍。桌面片段：Obsidian 1.14，笔迹由脚本回放。均为 HandNote 0.8.1，识别结果为插件真实输出。'],
+        'iPad 片段：Apple Pencil 实拍。桌面片段：Obsidian 1.14，笔迹由脚本回放。HandNote 0.8.1（导入：0.9.0），结果为插件真实输出。配音为语音合成（Kokoro），音乐为程序生成。'],
 } : {
   title: [`Your handwriting,<br>inside ${mark('your vault.')}`, 'Handwritten notebook pages for Obsidian', '', ''],
   end: [`Free and open source`, 'MIT licence', `Obsidian → Settings → Community plugins →${br}Browse → <b>HandNote</b>`,
-        'iPad clips: real recordings with Apple Pencil. Desktop clips: Obsidian 1.14, handwriting played back by a script. HandNote 0.8.1; recognition results are the plugin’s real output.'],
+        'iPad: real Apple Pencil recordings. Desktop: Obsidian 1.14, handwriting played back by a script. HandNote 0.8.1 (import 0.9.0), real output. Voice: Kokoro TTS. Music: generated.'],
 };
 const [h1, sub, install, note] = T[kind];
 document.getElementById('h1').innerHTML = h1;

@@ -133,7 +133,7 @@ or newer.
 | Action | Pencil / pen | Finger | Mouse / keyboard |
 |---|---|---|---|
 | Write | draw | — (unless "finger drawing" is on) | drag |
-| Pan / zoom | — | one-finger drag / pinch | space + drag, Ctrl + wheel |
+| Pan / zoom | desktop pen tablet: Space + drag, or a pen button set to middle click | one-finger drag / pinch | space + drag, Ctrl + wheel |
 | Undo / redo | — | two- / three-finger tap | Ctrl+Z / Ctrl+Shift+Z |
 | Edit a text | tap it (lasso or text tool) | tap it | click it (lasso or text tool) |
 | Pen ⇄ eraser | — | double-tap with one finger | 1 / E |

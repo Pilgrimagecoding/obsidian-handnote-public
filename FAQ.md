@@ -1,6 +1,6 @@
 # FAQ
 
-Answers for the public edition, HandNote 0.9.0. 中文：[常见问题](docs/zh-CN/faq.md)。
+Answers for the public edition, HandNote 0.9.1. 中文：[常见问题](docs/zh-CN/faq.md)。
 
 ### What is HandNote?
 

@@ -6,7 +6,7 @@ PowerPoint、Excel，在页面上手写批注。每一页都保存为仓库（Va
 
 - 官方插件页：<https://community.obsidian.md/plugins/handnote>
 - 源代码（MIT 许可）：<https://github.com/Pilgrimagecoding/obsidian-handnote-public>
-- 当前公开版本：0.9.0
+- 当前公开版本：0.9.1
 
 ![iPad 上用 Apple Pencil 在 HandNote 页面里书写（实拍）](images/ipad-01-writing.jpg)
 
