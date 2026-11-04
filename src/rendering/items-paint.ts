@@ -317,7 +317,8 @@ function paintConnector(ctx: CanvasRenderingContext2D, it: ShapeItem & { a: Pt; 
   ctx.beginPath();
   if (it.kind === 'curve' && it.c) {
     ctx.moveTo(it.a[0], it.a[1]);
-    ctx.quadraticCurveTo(it.c[0], it.c[1], it.b[0], it.b[1]);
+    if (it.c2) ctx.bezierCurveTo(it.c[0], it.c[1], it.c2[0], it.c2[1], it.b[0], it.b[1]);
+    else ctx.quadraticCurveTo(it.c[0], it.c[1], it.b[0], it.b[1]);
   } else {
     connectorPoints(it).forEach((p, i) => (i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])));
   }

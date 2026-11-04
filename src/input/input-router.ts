@@ -39,6 +39,8 @@ export type RouterState =
 export interface RouterOptions {
   fingerDrawing: boolean;
   tapGestures: boolean;
+  /** Hand tool: every pointer (pen, mouse, finger) moves the page; nothing is drawn. */
+  hand?: boolean;
 }
 
 /** What the router asks the editor to do. */
@@ -59,6 +61,8 @@ export interface RouterHost {
   eraseEnd(): void;
   navStart(): void;
   navEnd(velocity: { vx: number; vy: number } | null): void;
+  /** Smallest zoom of a pinch (default MIN_ZOOM; whiteboards go further out). */
+  minZoom?(): number;
   undo(): void;
   redo(): void;
   /** Diagnostics hook (optional). */
@@ -292,7 +296,7 @@ export class InputRouter {
     // Desktop pen tablet (Wacom, Huion, XP-Pen…): Space + pen drag pans like Space + mouse drag,
     // and a side button mapped to the middle button pans too, so the page can be moved without
     // putting the pen down for the mouse.
-    if (this.spaceDown || p.button === 1) return this.startPan(p, this.spaceDown ? 'pen-space-drag' : 'pen-middle-button');
+    if (this.spaceDown || p.button === 1 || this.opts.hand) return this.startPan(p, this.opts.hand ? 'pen-hand-tool' : this.spaceDown ? 'pen-space-drag' : 'pen-middle-button');
     // Palm landed before the pen: every navigating finger becomes a palm, and a pan that just
     // started is reverted so the page does not slide under the hand.
     const nav = this.navContacts();
@@ -308,7 +312,7 @@ export class InputRouter {
 
   private mouseDown(p: RouterPointer): Owner | null {
     this.stats.mouse++;
-    if (p.button === 1 || (p.button === 0 && this.spaceDown)) return this.startPan(p, p.button === 1 ? 'middle-button' : 'space-drag');
+    if (p.button === 1 || (p.button === 0 && (this.spaceDown || this.opts.hand))) return this.startPan(p, p.button === 1 ? 'middle-button' : this.opts.hand ? 'hand-tool' : 'space-drag');
     if (p.button !== 0) return null; // right button etc.: not handled
     if (this.drawId !== null || !this.host.canDrawAt(p)) return null;
     return this.beginDraw(p, 'mouse');
@@ -343,7 +347,7 @@ export class InputRouter {
     }
     if (draw) return this.palm(p, 'mouse-drawing'); // mouse drawing + touch: ignore touch
 
-    if (this.opts.fingerDrawing && this.navContacts().length === 0 && this.host.canDrawAt(p)) {
+    if (this.opts.fingerDrawing && !this.opts.hand && this.navContacts().length === 0 && this.host.canDrawAt(p)) {
       this.stats.touchInk++;
       return this.beginDraw(p, 'touch');
     }
@@ -488,8 +492,9 @@ export class InputRouter {
       const dist = Math.max(10, Math.hypot(a.x - b.x, a.y - b.y));
       const midX = (a.x + b.x) / 2;
       const midY = (a.y + b.y) / 2;
-      const zoom = clampZoom(an.cam.zoom * (dist / an.dist));
-      const z = zoomAt(an.cam, zoom, an.midX, an.midY);
+      const minZ = this.host.minZoom?.();
+      const zoom = clampZoom(an.cam.zoom * (dist / an.dist), minZ);
+      const z = zoomAt(an.cam, zoom, an.midX, an.midY, minZ);
       this.panned = true;
       this.history = [];
       this.host.setCamera({ ...z, x: z.x - (midX - an.midX) / z.zoom, y: z.y - (midY - an.midY) / z.zoom });

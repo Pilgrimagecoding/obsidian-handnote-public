@@ -1,4 +1,4 @@
-import type { HandNoteDocument, Page, PageBackground, Stroke } from './model';
+import type { BoardFrame, HandNoteDocument, Page, PageBackground, Stroke } from './model';
 import type { Item } from './items';
 
 export interface PageProps {
@@ -24,6 +24,10 @@ export type Op =
   | { kind: 'set-page'; pageId: string; before: PageProps; after: PageProps }
   /** Reorder: move a page from index `from` to index `to` (page navigator). */
   | { kind: 'move-page'; pageId: string; from: number; to: number }
+  /** Replace the whole page list (0.11: a note converted to a whiteboard, and back on undo). */
+  | { kind: 'set-pages'; before: Page[]; after: Page[] }
+  /** Replace a whiteboard's frames (0.11: frames moved or removed with the lasso). */
+  | { kind: 'set-frames'; pageId: string; before: BoardFrame[]; after: BoardFrame[] }
   | { kind: 'batch'; ops: Op[] };
 
 export interface ApplyResult {
@@ -47,6 +51,18 @@ function movePage(doc: HandNoteDocument, id: string, to: number): ApplyResult {
   const [page] = doc.pages.splice(idx, 1);
   doc.pages.splice(Math.max(0, Math.min(to, doc.pages.length)), 0, page);
   return { pages: [id], structural: true };
+}
+
+function setPages(doc: HandNoteDocument, pages: Page[]): ApplyResult {
+  doc.pages = pages.slice();
+  return { pages: pages.map((p) => p.id), structural: true };
+}
+
+function setFrames(doc: HandNoteDocument, id: string, frames: BoardFrame[]): ApplyResult {
+  const page = findPage(doc, id);
+  if (!page?.board) return { pages: [], structural: false };
+  page.board.frames = frames.slice();
+  return { pages: [page.id], structural: false };
 }
 
 function setPage(doc: HandNoteDocument, id: string, props: PageProps): ApplyResult {
@@ -74,6 +90,10 @@ export function applyOp(doc: HandNoteDocument, op: Op): ApplyResult {
     }
     case 'set-page':
       return setPage(doc, op.pageId, op.after);
+    case 'set-pages':
+      return setPages(doc, op.after);
+    case 'set-frames':
+      return setFrames(doc, op.pageId, op.after);
     case 'move-page':
       return movePage(doc, op.pageId, op.to);
     case 'batch':
@@ -123,6 +143,10 @@ export function invertOp(doc: HandNoteDocument, op: Op): ApplyResult {
     }
     case 'set-page':
       return setPage(doc, op.pageId, op.before);
+    case 'set-pages':
+      return setPages(doc, op.before);
+    case 'set-frames':
+      return setFrames(doc, op.pageId, op.before);
     case 'move-page':
       return movePage(doc, op.pageId, op.from);
     case 'batch':

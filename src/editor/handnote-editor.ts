@@ -12,6 +12,7 @@ import {
   newId,
   type Asset,
   type BackgroundKind,
+  type BoardFrame,
   type DocSource,
   type HandNoteDocument,
   type Page,
@@ -20,26 +21,30 @@ import {
 import { arrowTangents, detachMissing, isLine, resolveConnectors, shapeTouchesCircle, transformItem, type ImageItem, type Item, type ShapeItem, type TextItem } from '../document/items';
 import { quantizeSample } from '../document/codec';
 import { CanvasPathSink, emitStroke } from '../ink/outline';
-import { StrokeBuilder, buildStrokeGeometry } from '../ink/stroke-builder';
+import { INK_PIPELINE, StrokeBuilder, geometryFromStored, quantizeGeometry } from '../ink/stroke-builder';
 import { isInkTool, isObjectTool, type InkTool, type InputSample, type PenParams, type Tool } from '../ink/types';
 import { sanitizeExperimental, sanitizeParams, WIDTH_RANGE_MM } from '../ink/presets';
 import { cutStroke } from '../ink/erase';
-import { recognizeArrowHead, recognizeShape } from '../ink/shape-recognition';
+import { recognizeInk, recognizeInkArrowHead, type RecognizedShape } from '../ink/shape-recognition';
 import { PerfMonitor } from '../utils/perf';
 import { InputRouter, LONG_PRESS_MS, type RouterHost, type RouterPointer, type PointerKind } from '../input/input-router';
 import { InputDiagnostics } from '../input/diagnostics';
-import { constrainCamera, previewTransform, screenToWorld, zoomAt, type Camera } from './camera';
-import { documentBounds, layoutPages, paintInkStroke, paintPageContent, paintPaper, renderPageToCanvas, type PageRect } from '../rendering/paint';
+import { BOARD_MIN_ZOOM, MAX_ZOOM, MIN_ZOOM, constrainBoardCamera, constrainCamera, previewTransform, screenToWorld, zoomAt, type Camera } from './camera';
+import { boardExtent, convertPagesToBoard, defaultBoardBackground, framesInOrder, isBoard } from '../document/board';
+import { confirmInEditor } from '../ui/ai-panels';
+import { roughBounds, strokesIn } from '../rendering/board-index';
+import { documentBounds, layoutPages, pageRenderBox, paintBoard, paintInkStroke, paintPageContent, paintPaper, renderPageToCanvas, type PageRect } from '../rendering/paint';
 import { LINE_HEIGHT, TEXT_PAD, assetDataUrl, fitTextBox, onImageLoaded, pencilFill, primeImage, registerAssets } from '../rendering/items-paint';
 import { emitDashedGeometry } from '../rendering/dash';
-import { docPageReady, onDocLayerReady, registerSources, setDocPaintText } from '../rendering/doc-layer';
+import { DocError, docOutline, docPageReady, onDocLayerReady, registerSources, setDocPaintText, type OutlineItem } from '../rendering/doc-layer';
 import { documentPages } from '../import/pages';
 import { ERASER_SIZES, addPaletteColor, type EditorSettings, type PaperTone, type StrokeDash } from './settings';
 import { Toolbar, groupOf, type PenKind, type ToolGroup } from '../ui/toolbar';
 import { LassoController, clipPlainText, lassoClipboard, setLassoClipboard, transformStroke } from './lasso';
 import { ContextMenu, type MenuEntry } from '../ui/context-menu';
 import { MAX_PASTE_IMAGE, cleanPastedText, fromDataTransfer, readSystemClipboard, samePlain, type ClipboardContent } from './system-clipboard';
-import { PagesSidebar } from '../ui/pages-sidebar';
+import { PullToAddPage } from './pull-to-add';
+import { PagesSidebar, type ContentsEntry, type ContentsGroup } from '../ui/pages-sidebar';
 import { LaserPointer } from './laser';
 import { layoutSelection, type LayoutOp } from './layout';
 import type { AIStatus, AIRunResult } from '../ai/service';
@@ -50,6 +55,7 @@ import { ConvertFlow, type RecognitionBridge } from './convert-flow';
 import type { RecTask } from '../recognition/types';
 import { formulaBoxSize, formulaMarkdown, onFormulaReady, renderFormula } from '../rendering/formula';
 import { el, type IconSetter, hide, show } from '../ui/dom';
+import { onTap } from '../ui/tap';
 import {
   Popover,
   renderColorPanel,
@@ -63,6 +69,7 @@ import {
   renderStrokePanel,
   renderTemplatePanel,
   type TemplateChoice,
+  renderGoToPagePanel,
 } from '../ui/panels';
 import { t } from '../ui/i18n';
 import { detectEnvironment, resolveInputMode, type InputMode } from '../input/input-mode';
@@ -83,6 +90,8 @@ export interface EditorHost {
   setIcon?: IconSetter;
   /** Extra menu actions provided by the host (export, etc.). */
   menuActions?: { label: string; run: () => void }[];
+  /** Whiteboard (0.11): export what is on screen as PNG. */
+  exportView?(): void;
   /**
    * Store an inserted image (Obsidian: vault attachment) and return the src to keep in the note.
    * Without it, images are embedded as data URLs.
@@ -133,6 +142,14 @@ interface ActiveStroke {
   dash: StrokeDash;
 }
 
+/** A shape-pen stroke that has been lifted: shown as ink, recognised a moment later (0.12). */
+interface PendingShape {
+  a: ActiveStroke;
+  samples: InputSample[];
+  raf: number;
+  timer: number;
+}
+
 interface ActiveErase {
   pointerId: number;
   page: PageRect;
@@ -144,6 +161,14 @@ interface ActiveErase {
 }
 
 const SCENE_OVERSCAN = 0.2;
+/** During a pinch, an expensive scene is re-rendered anyway once it is stretched more than this… */
+const GESTURE_MAX_STRETCH = 1.4;
+/** …at most this often (ms). */
+const GESTURE_RERENDER_MS = 100;
+/** …and only when the last render took less than this (ms)… */
+const GESTURE_RENDER_BUDGET_MS = 12;
+/** …or the camera has not moved for this long (ms). */
+const GESTURE_PAUSE_MS = 120;
 
 /**
  * The handwriting editor: DOM, input routing, camera, rendering and undo history.
@@ -162,14 +187,28 @@ export class HandNoteEditor {
 
   private doc: HandNoteDocument;
   private rects: PageRect[] = [];
+  /** The document is an infinite whiteboard (v7): one unbounded page at the world origin. */
+  private boardMode = false;
+  private pendingShape: PendingShape | null = null;
+  private zoomLabelRaf = 0;
+  /** Whiteboard content bounds (cached until the next change) and the "back to content" button. */
+  private boardBoundsCache: { x: number; y: number; w: number; h: number } | null = null;
+  private backBtn: HTMLButtonElement | null = null;
   private bounds = { minX: 0, maxX: 0, height: 0 };
   private cam: Camera = { x: 0, y: 0, zoom: 1 };
   private renderedCam: Camera = { x: 0, y: 0, zoom: 1 };
+  private lastSceneRenderAt = 0;
+  private lastCamChangeAt = 0;
+  /** Offset of the canvases (CSS px) that puts their pixels on device pixels (see measureSnap). */
+  private snapX = 0;
+  private snapY = 0;
   private viewW = 0;
   private viewH = 0;
   private dpr = 1;
   private readOnly = false;
   private skipItems: ReadonlySet<string> = new Set();
+  /** Whiteboard frames hidden from the scene while the lasso moves them (drawn by the lasso preview). */
+  private skipFrames: ReadonlySet<string> = new Set();
   private skipObj: ReadonlySet<string> = new Set();
   private skipLasso: ReadonlySet<string> = new Set();
   private lassoPointer: { id: number; page: PageRect } | null = null;
@@ -214,6 +253,13 @@ export class HandNoteEditor {
   private objPointer: { id: number; page: PageRect } | null = null;
   private navigating = false;
   private spaceHeld = false;
+  /** "Pull to add a page" indicator under the last page (0.10). */
+  private pull: PullToAddPage;
+  /** Wheel scrolling past the end, in screen px (desktop has no "release": a pause adds). */
+  private wheelPull = 0;
+  private wheelPullTimer = 0;
+  /** Tool to return to when the hand is switched off (toggleHand). */
+  private toolBeforeHand: Tool | null = null;
   private pointerInside = false;
   private hiddenCam: Camera | null = null;
 
@@ -246,6 +292,7 @@ export class HandNoteEditor {
     this.toolbar = new Toolbar(this.root, this.toolbarActions());
     this.viewport = el('div', 'hn-viewport', this.root);
     this.viewport.tabIndex = 0;
+    this.pull = new PullToAddPage(this.root);
     this.scene = el('canvas', 'hn-scene', this.viewport);
     this.activeStable = el('canvas', 'hn-active', this.viewport);
     this.activeTail = el('canvas', 'hn-active', this.viewport);
@@ -357,6 +404,10 @@ export class HandNoteEditor {
           this.skipLasso = ids;
           this.updateSkip();
         },
+        setSkipFrames: (ids) => {
+          this.skipFrames = ids;
+          this.requestScene(true);
+        },
         requestScene: () => this.requestScene(true),
         push: (op) => this.pushOp(op),
         notify: (m) => this.notify(m),
@@ -384,6 +435,7 @@ export class HandNoteEditor {
     this.router = new InputRouter(this.routerHost(), {
       fingerDrawing: settings.fingerDrawing,
       tapGestures: settings.tapGestures,
+      hand: settings.tool === 'hand',
     });
     this.bindInput();
     this.disposers.push(onImageLoaded(() => this.requestScene(true)));
@@ -397,6 +449,7 @@ export class HandNoteEditor {
     this.relayout();
     this.resizeObs = new ResizeObserver(() => this.onResize());
     this.resizeObs.observe(this.viewport);
+    this.watchPixelRatio();
     this.onResize();
     this.fitWidth(0);
     this.updateToolbar();
@@ -414,6 +467,7 @@ export class HandNoteEditor {
   /** Replace the document (e.g. reload after an external change). Keeps camera when possible. */
   setDocument(doc: HandNoteDocument, opts: { keepCamera?: boolean; resetHistory?: boolean } = {}): void {
     this.cancelActive();
+    this.dropPendingShape();
     this.convertFlow.closeResult();
     this.objects.deselect();
     this.lasso.clear();
@@ -451,7 +505,7 @@ export class HandNoteEditor {
 
   updateSettings(s: EditorSettings): void {
     this.settings = s;
-    this.router.setOptions({ fingerDrawing: s.fingerDrawing, tapGestures: s.tapGestures });
+    this.router.setOptions({ fingerDrawing: s.fingerDrawing, tapGestures: s.tapGestures, hand: s.tool === 'hand' });
     this.diagnostics.setEnabled(s.diagnostics);
     this.applyMode();
     this.updateToolbar();
@@ -483,6 +537,7 @@ export class HandNoteEditor {
     // whose pointerup is lost while the app is suspended must not block navigation later).
     this.router.reset();
     if (this.active) this.endStroke(true);
+    this.flushPendingShape();
     if (this.erase) this.endErase();
     this.objects.cancel();
     this.objects.finishEdit();
@@ -491,6 +546,7 @@ export class HandNoteEditor {
 
   undo(): void {
     if (this.active || this.erase || this.objects.busy || this.lasso.busy) return;
+    this.flushPendingShape();
     this.objects.finishEdit();
     this.lasso.clear();
     const r = this.history.undo(this.doc);
@@ -500,6 +556,7 @@ export class HandNoteEditor {
 
   redo(): void {
     if (this.active || this.erase || this.objects.busy || this.lasso.busy) return;
+    this.flushPendingShape();
     this.objects.finishEdit();
     this.lasso.clear();
     const r = this.history.redo(this.doc);
@@ -513,7 +570,9 @@ export class HandNoteEditor {
     if (tool !== this.settings.tool || !isObjectTool(tool)) this.objects.deselect();
     if (tool !== 'lasso') this.lasso.clear();
     if (tool !== 'laser') this.laser.clear();
+    if (tool === 'hand' && this.settings.tool !== 'hand') this.toolBeforeHand = this.settings.tool;
     this.settings.tool = tool;
+    this.router.setOptions({ hand: tool === 'hand' });
     if (isInkTool(tool)) this.settings.lastPen = tool;
     if (groupOf(tool) !== prevGroup) this.settings.subbarOpen = true;
     this.host.onSettingsChange(this.settings);
@@ -522,6 +581,13 @@ export class HandNoteEditor {
     if (tool === 'text') this.hint('text', t('tapToAddText'));
     if (tool === 'shape') this.hint('shape', t('dragToDrawShape'));
     this.viewport.classList.toggle('is-laser', tool === 'laser');
+    this.viewport.classList.toggle('is-hand', tool === 'hand');
+  }
+
+  /** Hand tool on / off: back to the tool that was active before the hand (a pen by default). */
+  toggleHand(): void {
+    if (this.settings.tool === 'hand') this.setTool(this.toolBeforeHand && this.toolBeforeHand !== 'hand' ? this.toolBeforeHand : this.settings.lastPen);
+    else this.setTool('hand');
   }
 
   setColor(c: string): void {
@@ -550,11 +616,117 @@ export class HandNoteEditor {
   }
 
   gotoPage(index: number): void {
+    if (this.boardMode) return;
     const r = this.rects[Math.max(0, Math.min(this.rects.length - 1, index))];
     if (!r) return;
     this.setCamera({ ...this.cam, y: r.y - 12 / this.cam.zoom });
     this.requestScene(true);
     this.updateToolbar();
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Pull to add a page (0.10)
+  // ---------------------------------------------------------------------------------------------
+
+  /** How far (screen px) a requested camera goes past the end of the last page; 0 if it does not. */
+  private pullOvershoot(want: Camera): number {
+    if (!this.settings.pullToAddPage || this.readOnly || this.boardMode || !this.rects.length) return 0;
+    if (Math.abs(want.zoom - this.cam.zoom) > 1e-6) return 0; // pinch zoom, not a pull
+    return Math.max(0, (want.y - this.cam.y) * this.cam.zoom);
+  }
+
+  /** Show the ring under the last page, filled by `overshoot`. */
+  private updatePull(overshoot: number): void {
+    const last = this.rects[this.rects.length - 1];
+    if (!last || overshoot <= 0) {
+      this.pull.reset();
+      return;
+    }
+    const vr = this.viewport.getBoundingClientRect();
+    const rr = this.root.getBoundingClientRect();
+    const x = vr.left - rr.left + (last.x + last.w / 2 - this.cam.x) * this.cam.zoom;
+    const bottom = vr.top - rr.top + (last.y + last.h - this.cam.y) * this.cam.zoom;
+    // just below the page, but never under the bottom edge of the view
+    const y = Math.min(bottom + 20, vr.bottom - rr.top - 110);
+    this.pull.update(overshoot, x, y);
+  }
+
+  /** Wheel / trackpad: scrolling on past the end fills the ring; a short pause while full adds. */
+  private wheelPullStep(dy: number, overshoot: number): void {
+    window.clearTimeout(this.wheelPullTimer);
+    cancelAnimationFrame(this.zoomLabelRaf);
+    if (dy <= 0 || overshoot <= 0) {
+      this.wheelPull = 0;
+      this.pull.reset();
+      return;
+    }
+    // a trackpad keeps sending wheel events after the fingers lift: ask for twice the distance
+    this.wheelPull += overshoot / 2;
+    this.updatePull(this.wheelPull);
+    this.wheelPullTimer = window.setTimeout(() => {
+      const add = this.pull.armed;
+      this.wheelPull = 0;
+      this.pull.reset();
+      if (add && !this.destroyed) this.addPageAtEnd();
+    }, 260);
+  }
+
+  /** Append a page like the last one (size and paper) and show it. One undo step. */
+  addPageAtEnd(): void {
+    if (this.readOnly) return;
+    const n = this.doc.pages.length;
+    const last = this.doc.pages[n - 1];
+    const background = last && !last.doc ? last.background : defaultBackground(this.settings.newPageBackground, this.settings.newPaperTone);
+    const page = createPage(last?.width ?? 595, last?.height ?? 842, background);
+    this.pushOp({ kind: 'add-page', index: n, page });
+    this.gotoPage(n);
+    this.notify(t('pageAdded'));
+  }
+
+  /** Whiteboard: the zoom button's menu (show all / 100 %). */
+  openZoomMenu(anchor?: HTMLElement): void {
+    const p = this.openPopover('zoom', anchor ?? this.toolbar.pageLabelEl, 'hn-zoom-panel');
+    if (!p) return;
+    const row = el('div', 'hn-zoom-row', p.el);
+    const btn = (label: string, run: () => void) => {
+      const b = el('button', 'hn-action', row, label);
+      b.type = 'button';
+      onTap(b, () => {
+        this.closePopover();
+        run();
+      });
+    };
+    btn(t('showAll'), () => this.fitContent());
+    btn(t('zoom100'), () => this.zoomTo(1));
+    p.place('right');
+  }
+
+  /** Go to page (0.10): page-number panel under the toolbar's page number. */
+  openGoToPage(anchor?: HTMLElement): void {
+    const p = this.openPopover('goto', anchor ?? this.toolbar.pageLabelEl, 'hn-goto-panel');
+    if (!p) return;
+    const input = renderGoToPagePanel(p.el, {
+      count: this.doc.pages.length,
+      current: this.currentPageIndex(),
+      describe: (i) => this.describePage(i),
+      onGo: (i) => {
+        this.closePopover();
+        this.gotoPage(i);
+      },
+    });
+    p.place('right');
+    window.setTimeout(() => {
+      input.focus();
+      input.select();
+    }, 30);
+  }
+
+  /** "Lecture.pdf · page 12 of the original" for an imported page, else null. */
+  describePage(i: number): string | null {
+    const pg = this.doc.pages[i];
+    const src = pg?.doc ? this.doc.sources?.[pg.doc.src] : undefined;
+    if (!pg?.doc || !src) return null;
+    return `${src.name} · ${t('sourcePage').replace('{n}', String(pg.doc.n))}`;
   }
 
   addPageAfterCurrent(): void {
@@ -608,6 +780,11 @@ export class HandNoteEditor {
   /** Change page size / orientation / paper colour / pattern (undoable). */
   applyTemplate(c: TemplateChoice): void {
     if (this.readOnly) return;
+    if (this.boardMode) return this.applyBoardTexture(c);
+    if (c.sizeId === 'board') {
+      void this.convertToBoard({ kind: c.kind, tone: c.tone });
+      return;
+    }
     const size = PAGE_SIZES.find((p) => p.id === c.sizeId) ?? PAGE_SIZES[1];
     const width = c.landscape ? size.height : size.width;
     const height = c.landscape ? size.width : size.height;
@@ -635,6 +812,36 @@ export class HandNoteEditor {
     this.updateToolbar();
   }
 
+  /** Whiteboard: paper colour and texture of the whole board (undoable). */
+  private applyBoardTexture(c: TemplateChoice): void {
+    const p = this.doc.pages[0];
+    if (!p) return;
+    const tone = PAPER_TONES[c.tone];
+    const kindChanged = p.background.kind !== c.kind;
+    const background = { ...p.background, kind: c.kind, spacing: kindChanged ? defaultBackground(c.kind).spacing : p.background.spacing, paper: tone.paper, line: tone.line };
+    this.pushOp({ kind: 'set-page', pageId: p.id, before: { width: p.width, height: p.height, background: { ...p.background } }, after: { width: p.width, height: p.height, background } });
+  }
+
+  /**
+   * Convert this note to an infinite whiteboard after a confirmation (0.11): pages become frames
+   * from left to right; one undo step brings the note with pages back.
+   */
+  async convertToBoard(o: { kind?: BackgroundKind; tone?: PaperTone } = {}): Promise<boolean> {
+    if (this.readOnly || this.boardMode || this.closed) return false;
+    const ok = await confirmInEditor(this.root, { title: t('convertBoardTitle'), body: t('convertBoardBody'), ok: t('convertBoardOk'), cancel: t('cancel') });
+    if (!ok || this.closed || this.boardMode) return false;
+    this.commitPending();
+    this.objects.deselect();
+    this.lasso.clear();
+    const bg = defaultBoardBackground();
+    const tone = PAPER_TONES[o.tone ?? 'white'];
+    const kind = o.kind ?? bg.kind;
+    const background = { ...bg, kind, spacing: defaultBackground(kind).spacing, paper: tone.paper, line: tone.line };
+    this.pushOp({ kind: 'set-pages', before: this.doc.pages.slice(), after: [convertPagesToBoard(this.doc.pages, background)] });
+    this.notify(t('convertedBoard'));
+    return true;
+  }
+
   private fitWidthZoom(viewW = this.viewW): number {
     const maxW = Math.max(...this.doc.pages.map((p) => p.width), 100);
     return Math.min(3, Math.max(0.3, (viewW - 24) / maxW));
@@ -646,7 +853,7 @@ export class HandNoteEditor {
    */
   private keepViewAcrossResize(change: () => void): void {
     const z = this.cam.zoom;
-    const wasFit = this.viewW > 0 && Math.abs(z - this.fitWidthZoom()) / z < 0.03;
+    const wasFit = !this.boardMode && this.viewW > 0 && Math.abs(z - this.fitWidthZoom()) / z < 0.03;
     const cx = this.cam.x + this.viewW / 2 / z;
     const cy = this.cam.y + this.viewH / 2 / z;
     change();
@@ -659,6 +866,7 @@ export class HandNoteEditor {
 
   fitWidth(pageIndex = this.currentPageIndex()): void {
     if (this.viewW <= 0) return;
+    if (this.boardMode) return this.fitContent();
     const zoom = this.fitWidthZoom();
     const r = this.rects[pageIndex] ?? this.rects[0];
     this.setCamera({ x: 0, y: (r ? r.y : 0) - 12 / zoom, zoom });
@@ -667,6 +875,7 @@ export class HandNoteEditor {
 
   /** Zoom so the whole current page is visible. */
   fitPage(pageIndex = this.currentPageIndex()): void {
+    if (this.boardMode) return this.fitContent();
     const r = this.rects[pageIndex] ?? this.rects[0];
     if (!r || this.viewW <= 0) return;
     const zoom = Math.min((this.viewW - 24) / r.w, (this.viewH - 24) / r.h);
@@ -685,6 +894,9 @@ export class HandNoteEditor {
     // from here on no operation reaches the document (the stroke in progress was committed above)
     this.closed = true;
     this.closePagesSidebar();
+    window.clearTimeout(this.wheelPullTimer);
+    cancelAnimationFrame(this.zoomLabelRaf);
+    this.pull.destroy();
     this.toolbar.destroy();
     this.convertFlow.dispose();
     this.objects.destroy();
@@ -709,6 +921,118 @@ export class HandNoteEditor {
   private relayout(): void {
     this.rects = layoutPages(this.doc);
     this.bounds = documentBounds(this.rects);
+    const board = isBoard(this.doc);
+    if (board !== this.boardMode) {
+      this.boardMode = board;
+      this.root.classList.toggle('is-board', board);
+      // converted to a whiteboard (or undone back to pages): show the whole result
+      if (this.viewW > 0) window.setTimeout(() => (this.boardMode ? this.fitContent() : this.fitWidth(0)), 0);
+    }
+  }
+
+  /** The part of the world on screen (whiteboard export of the current view). */
+  get viewRect(): { x: number; y: number; w: number; h: number; zoom: number } {
+    return { x: this.cam.x, y: this.cam.y, w: this.viewW / this.cam.zoom, h: this.viewH / this.cam.zoom, zoom: this.cam.zoom };
+  }
+
+  /** True when this editor shows an infinite whiteboard. */
+  get isBoard(): boolean {
+    return this.boardMode;
+  }
+
+  private get minZoom(): number {
+    return this.boardMode ? BOARD_MIN_ZOOM : MIN_ZOOM;
+  }
+
+  /** Whiteboard content bounds (frames, ink, objects), cached until the document changes. */
+  private boardBounds(): { x: number; y: number; w: number; h: number } | null {
+    const r = this.rects[0];
+    if (!this.boardMode || !r) return null;
+    // bounds from the stroke points: no ink outline is built for strokes out of view
+    return (this.boardBoundsCache ??= boardExtent(r.page, roughBounds));
+  }
+
+  /** Whiteboard: show "Back to content" when nothing of the content is in view. */
+  private updateBackButton(): void {
+    const e = this.boardBounds();
+    const hasContent = !!e && (this.doc.pages[0]?.strokes.length || this.doc.pages[0]?.items.length || this.doc.pages[0]?.board?.frames.length);
+    const vx0 = this.cam.x;
+    const vy0 = this.cam.y;
+    const vx1 = vx0 + this.viewW / this.cam.zoom;
+    const vy1 = vy0 + this.viewH / this.cam.zoom;
+    const away = !!e && !!hasContent && (e.x > vx1 || e.x + e.w < vx0 || e.y > vy1 || e.y + e.h < vy0);
+    if (away && !this.backBtn) {
+      const b = el('button', 'hn-back-to-content', this.root, t('backToContent'));
+      b.type = 'button';
+      onTap(b, () => this.fitContent());
+      this.backBtn = b;
+    } else if (!away && this.backBtn) {
+      this.backBtn.remove();
+      this.backBtn = null;
+    }
+  }
+
+  /** Whiteboard: zoom and scroll so all content (frames, ink, objects) is visible. */
+  fitContent(): void {
+    const r = this.rects[0];
+    if (!r || this.viewW <= 0) return;
+    const e = this.boardBounds() ?? boardExtent(r.page, roughBounds);
+    const pad = 32;
+    const zoom = Math.min(MAX_ZOOM, Math.max(BOARD_MIN_ZOOM, Math.min(1, (this.viewW - 2 * pad) / e.w, (this.viewH - 2 * pad) / e.h)));
+    this.setCamera({ x: e.x + e.w / 2 - this.viewW / 2 / zoom, y: e.y + e.h / 2 - this.viewH / 2 / zoom, zoom });
+    this.requestScene(true);
+    this.updateToolbar();
+  }
+
+  /** Whiteboard: show a page frame whole (zoomed to fit the view). */
+  showFrame(id: string): void {
+    const f = this.rects[0]?.page.board?.frames.find((x) => x.id === id);
+    if (!f || this.viewW <= 0) return;
+    const zoom = Math.max(BOARD_MIN_ZOOM, Math.min(MAX_ZOOM, (this.viewW - 24) / f.width, (this.viewH - 24) / f.height));
+    this.setCamera({ x: f.x + f.width / 2 - this.viewW / 2 / zoom, y: f.y + f.height / 2 - this.viewH / 2 / zoom, zoom });
+    this.requestScene(true);
+    this.updateToolbar();
+  }
+
+  /** Whiteboard: the frame nearest the centre of the view (frames in board order), or -1. */
+  private currentFrameIndex(frames: BoardFrame[]): number {
+    const cx = this.cam.x + this.viewW / this.cam.zoom / 2;
+    const cy = this.cam.y + this.viewH / this.cam.zoom / 2;
+    let best = -1;
+    let bd = Infinity;
+    frames.forEach((f, i) => {
+      const dx = Math.max(f.x - cx, 0, cx - f.x - f.width);
+      const dy = Math.max(f.y - cy, 0, cy - f.y - f.height);
+      const d = Math.hypot(dx, dy);
+      if (d < bd) {
+        bd = d;
+        best = i;
+      }
+    });
+    return best;
+  }
+
+  /** Whiteboard: previous / next page frame (left to right). */
+  stepFrame(dir: -1 | 1): void {
+    const page = this.rects[0]?.page;
+    if (!this.boardMode || !page) return;
+    const frames = framesInOrder(page);
+    if (!frames.length) return;
+    const cur = this.currentFrameIndex(frames);
+    const cx = this.cam.x + this.viewW / this.cam.zoom / 2;
+    const f = frames[cur];
+    // the nearest frame is not centred yet: show it first
+    const centred = f && Math.abs(f.x + f.width / 2 - cx) < 4 / this.cam.zoom;
+    const next = centred ? cur + dir : cur;
+    this.showFrame(frames[Math.max(0, Math.min(frames.length - 1, next))].id);
+  }
+
+  /** Whiteboard: 100 % zoom around the centre of the view. */
+  zoomTo(zoom: number): void {
+    if (this.viewW <= 0) return;
+    this.setCamera(zoomAt(this.cam, zoom, this.viewW / 2, this.viewH / 2, this.minZoom));
+    this.requestScene(true);
+    this.updateToolbar();
   }
 
   private onResize(): void {
@@ -738,13 +1062,63 @@ export class HandNoteEditor {
     this.viewW = w;
     this.viewH = h;
     this.dpr = dpr;
-    const ov = Math.round(Math.max(w, h) * SCENE_OVERSCAN);
-    this.sizeCanvas(this.scene, w + 2 * ov, h + 2 * ov, -ov, -ov);
-    this.sizeCanvas(this.activeStable, w, h, 0, 0);
-    this.sizeCanvas(this.activeTail, w, h, 0, 0);
-    this.scene.style.transformOrigin = `${ov}px ${ov}px`;
+    this.measureSnap(r);
+    this.placeCanvases();
     if (first) this.fitWidth(0);
     else this.setCamera(this.cam);
+    this.renderScene();
+  }
+
+  /**
+   * Re-size the canvases when the device pixel ratio changes without a resize (the window moved to
+   * a screen with another density, browser zoom): they would be drawn at the old resolution.
+   */
+  private watchPixelRatio(): void {
+    if (typeof window.matchMedia !== 'function') return;
+    const mq = window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+    const changed = () => {
+      mq.removeEventListener?.('change', changed);
+      if (this.destroyed) return;
+      this.onResize();
+      this.watchPixelRatio();
+    };
+    mq.addEventListener?.('change', changed);
+    this.disposers.push(() => mq.removeEventListener?.('change', changed));
+  }
+
+  /**
+   * Where the viewport sits relative to the device pixel grid (0.12). Obsidian's layout puts it at
+   * fractional positions (y = 116.03 px); the canvases are moved by the remainder so their pixels
+   * are device pixels, and all of them — the live ink and the scene — by the same amount. A
+   * browser may otherwise snap the composited scene layer and the live layers differently, and
+   * the ink moved by up to half a pixel when the pen lifted.
+   */
+  private measureSnap(r: DOMRect): boolean {
+    const d = this.dpr || 1;
+    const sx = (Math.round(r.left * d) - r.left * d) / d;
+    const sy = (Math.round(r.top * d) - r.top * d) / d;
+    const changed = Math.abs(sx - this.snapX) > 1e-4 || Math.abs(sy - this.snapY) > 1e-4;
+    this.snapX = sx;
+    this.snapY = sy;
+    return changed;
+  }
+
+  private placeCanvases(): void {
+    const ov = this.overscan;
+    const w = this.viewW;
+    const h = this.viewH;
+    this.sizeCanvas(this.scene, w + 2 * ov, h + 2 * ov, -ov + this.snapX, -ov + this.snapY);
+    this.sizeCanvas(this.activeStable, w, h, this.snapX, this.snapY);
+    this.sizeCanvas(this.activeTail, w, h, this.snapX, this.snapY);
+    // the preview transform is relative to the viewport's top left corner
+    this.scene.style.transformOrigin = `${ov - this.snapX}px ${ov - this.snapY}px`;
+  }
+
+  /** The viewport moved by a fraction of a pixel without a resize: move the canvases with it. */
+  private checkSnap(): void {
+    if (!this.viewW) return;
+    if (!this.measureSnap(this.viewport.getBoundingClientRect())) return;
+    this.placeCanvases();
     this.renderScene();
   }
 
@@ -757,12 +1131,26 @@ export class HandNoteEditor {
     c.style.top = `${top}px`;
   }
 
+  /**
+   * Overscan of the scene canvas (CSS px), a multiple of 8 so that it is a whole number of device
+   * pixels at every common pixel ratio (1, 1.25, 1.5, 2, 2.625, 3…). With a fraction (171 px at
+   * 1.5× = 256.5 device px) the scene canvas was placed half a device pixel away from the live ink
+   * layers, and every stroke jumped by that much when the pen lifted (0.12).
+   */
   private get overscan(): number {
-    return Math.round(Math.max(this.viewW, this.viewH) * SCENE_OVERSCAN);
+    return Math.round((Math.max(this.viewW, this.viewH) * SCENE_OVERSCAN) / 8) * 8;
   }
 
   private setCamera(c: Camera): void {
-    this.cam = constrainCamera(c, { w: this.viewW, h: this.viewH }, this.bounds);
+    this.lastCamChangeAt = performance.now();
+    const prevZoom = this.cam.zoom;
+    this.cam = this.boardMode ? constrainBoardCamera(c) : constrainCamera(c, { w: this.viewW, h: this.viewH }, this.bounds);
+    if (this.boardMode && this.cam.zoom !== prevZoom && !this.zoomLabelRaf) {
+      this.zoomLabelRaf = window.requestAnimationFrame(() => {
+        this.zoomLabelRaf = 0;
+        if (!this.destroyed) this.updateToolbar();
+      });
+    }
     // keep the scene bitmap aligned until the next re-render
     const tr = previewTransform(this.renderedCam, this.cam);
     this.scene.style.transform = `translate(${tr.tx}px, ${tr.ty}px) scale(${tr.k})`;
@@ -801,8 +1189,15 @@ export class HandNoteEditor {
     if (this.active) this.renderActive();
     if (this.sceneDirty) {
       const gestureActive = this.navigating || this.inertia !== null;
-      // During navigation, re-render only if it is cheap; otherwise rely on the CSS preview transform
-      if (!gestureActive || this.lastSceneRenderMs < 7) {
+      // During navigation, re-render only if it is cheap; otherwise rely on the CSS preview transform —
+      // but not for long once the bitmap is stretched a lot (zooming in showed enlarged pixels,
+      // "small squares", until the fingers lifted)
+      const stretch = Math.max(this.cam.zoom / this.renderedCam.zoom, this.renderedCam.zoom / this.cam.zoom);
+      // (0.12: only when that render is cheap enough for a frame, or the fingers have paused —
+      // a full render of a dense page in the middle of a pinch made zooming stutter)
+      const affordable = this.lastSceneRenderMs < GESTURE_RENDER_BUDGET_MS || now - this.lastCamChangeAt > GESTURE_PAUSE_MS;
+      const stale = stretch > GESTURE_MAX_STRETCH && now - this.lastSceneRenderAt > GESTURE_RERENDER_MS && affordable;
+      if (!gestureActive || this.lastSceneRenderMs < 7 || stale) {
         this.renderScene();
       } else {
         this.schedule();
@@ -813,7 +1208,7 @@ export class HandNoteEditor {
 
   private sceneCtxTransform(ctx: CanvasRenderingContext2D, cam: Camera, ov: number): void {
     const k = this.dpr * cam.zoom;
-    ctx.setTransform(k, 0, 0, k, this.dpr * (ov - cam.x * cam.zoom), this.dpr * (ov - cam.y * cam.zoom));
+    ctx.setTransform(k, 0, 0, k, this.dpr * (ov - this.snapX - cam.x * cam.zoom), this.dpr * (ov - this.snapY - cam.y * cam.zoom));
   }
 
   renderScene(): void {
@@ -831,7 +1226,11 @@ export class HandNoteEditor {
     const vx1 = cam.x + (this.viewW + ov) / cam.zoom;
     const vy1 = cam.y + (this.viewH + ov) / cam.zoom;
     const shadow = cssVar(this.viewport, '--hn-page-shadow', 'rgba(0,0,0,0.12)');
-    for (const r of this.rects) {
+    if (this.boardMode && this.rects[0]) {
+      // whiteboard: texture over the whole view, frames in view, content — no page clip
+      paintBoard(ctx, this.rects[0].page, this.cache, [vx0, vy0, vx1, vy1], this.dpr * cam.zoom, { shadow, texture: this.settings.paperTexture, skip: this.skipItems, skipFrames: this.skipFrames });
+    }
+    for (const r of this.boardMode ? [] : this.rects) {
       if (r.x > vx1 || r.x + r.w < vx0 || r.y > vy1 || r.y + r.h < vy0) continue;
       ctx.save();
       ctx.translate(r.x, r.y);
@@ -845,7 +1244,9 @@ export class HandNoteEditor {
       ctx.restore();
     }
     this.renderedCam = { ...cam };
+    this.lastSceneRenderAt = performance.now();
     this.scene.style.removeProperty('transform');
+    if (this.boardMode || this.backBtn) this.updateBackButton();
     this.lastSceneRenderMs = performance.now() - t0;
     this.perf.sceneRender.push(this.lastSceneRenderMs);
   }
@@ -856,16 +1257,18 @@ export class HandNoteEditor {
     this.sceneCtxTransform(ctx, this.renderedCam, this.overscan);
     ctx.save();
     ctx.translate(r.x, r.y);
-    ctx.beginPath();
-    ctx.rect(0, 0, r.w, r.h);
-    ctx.clip();
+    if (!this.boardMode) {
+      ctx.beginPath();
+      ctx.rect(0, 0, r.w, r.h);
+      ctx.clip();
+    }
     paintInkStroke(ctx, stroke, this.cache.get(stroke));
     ctx.restore();
   }
 
   private activeTransform(ctx: CanvasRenderingContext2D, r: PageRect): void {
     const k = this.dpr * this.cam.zoom;
-    ctx.setTransform(k, 0, 0, k, k * (r.x - this.cam.x), k * (r.y - this.cam.y));
+    ctx.setTransform(k, 0, 0, k, k * (r.x - this.cam.x) - this.dpr * this.snapX, k * (r.y - this.cam.y) - this.dpr * this.snapY);
   }
 
   private inkFill(ctx: CanvasRenderingContext2D, a: ActiveStroke): string | CanvasPattern {
@@ -962,6 +1365,7 @@ export class HandNoteEditor {
   }
 
   private afterOp(structural: boolean): void {
+    this.boardBoundsCache = null;
     if (structural) this.relayout();
     this.setCamera(this.cam);
     this.lasso.sync();
@@ -982,6 +1386,7 @@ export class HandNoteEditor {
   }
 
   private pageAt(wx: number, wy: number): PageRect | null {
+    if (this.boardMode) return this.rects[0] ?? null; // a whiteboard has no edges
     for (const r of this.rects) {
       if (wx >= r.x && wx <= r.x + r.w && wy >= r.y && wy <= r.y + r.h) return r;
     }
@@ -1126,6 +1531,8 @@ export class HandNoteEditor {
   }
 
   private onPointerDown(e: PointerEvent): void {
+    // a lifted shape-pen stroke is settled before anything else (erase, lasso, a new stroke) starts
+    this.flushPendingShape();
     if (isOverlayTarget(e.target)) return;
     this.pinScroll();
     this.closePopover();
@@ -1235,9 +1642,13 @@ export class HandNoteEditor {
       }, 250);
     } else if (e.key === 'Escape' && this.lasso.selection) {
       this.lasso.clear();
-    } else if (!mod && !e.altKey && focused) {
+    } else if (!mod && !e.altKey && (focused || (this.pointerInside && document.activeElement === document.body))) {
+      // mouse users: clicking the canvas does not focus it, so a pointer over it is enough
       const tools: Record<string, Tool> = { '1': 'fountain', '2': 'pencil', '3': 'highlighter', '4': 'eraser', e: 'eraser', t: 'text', l: 'lasso' };
-      if (tools[k]) {
+      if (k === 'h') {
+        e.preventDefault();
+        this.toggleHand();
+      } else if (tools[k]) {
         e.preventDefault();
         this.settings.drawShape = false;
         this.setTool(tools[k]);
@@ -1260,7 +1671,7 @@ export class HandNoteEditor {
 
   /** Zoom around the viewport centre (keyboard / buttons). */
   zoomBy(factor: number): void {
-    this.setCamera(zoomAt(this.cam, this.cam.zoom * factor, this.viewW / 2, this.viewH / 2));
+    this.setCamera(zoomAt(this.cam, this.cam.zoom * factor, this.viewW / 2, this.viewH / 2, this.minZoom));
     this.requestScene(true);
     this.updateToolbar();
   }
@@ -1275,8 +1686,11 @@ export class HandNoteEditor {
   private routerHost(): RouterHost {
     return {
       getCamera: () => ({ ...this.cam }),
+      minZoom: () => this.minZoom,
       setCamera: (c) => {
         this.setCamera(c);
+        // a finger / pen / mouse drag that keeps going past the end of the last page
+        if (this.navigating) this.updatePull(this.pullOvershoot(c));
         this.requestScene(true);
         return { ...this.cam };
       },
@@ -1366,7 +1780,7 @@ export class HandNoteEditor {
           this.abortStroke();
           return;
         }
-        if (p && this.evt) this.addSample(this.evt);
+        if (p && this.evt) this.addLiftSample(this.evt);
         this.endStroke(false);
       },
       eraseBegin: (p) => {
@@ -1390,6 +1804,12 @@ export class HandNoteEditor {
       },
       navEnd: (velocity) => {
         this.navigating = false;
+        if (this.pull.armed) {
+          this.pull.reset();
+          this.addPageAtEnd();
+          return;
+        }
+        this.pull.reset();
         if (velocity && Math.hypot(velocity.vx, velocity.vy) >= 0.25) {
           this.inertia = { vx: velocity.vx, vy: velocity.vy, last: performance.now() };
           this.schedule();
@@ -1524,6 +1944,7 @@ export class HandNoteEditor {
   }
 
   private beginStroke(e: PointerEvent, page: PageRect, tool: InkTool): void {
+    this.flushPendingShape();
     const pen = this.settings.pens[tool];
     const experimental = this.isExperimental(tool);
     const params = experimental ? sanitizeExperimental(this.settings.experimental) : sanitizeParams(tool, pen.params);
@@ -1531,6 +1952,7 @@ export class HandNoteEditor {
       zoom: this.cam.zoom,
       hasPressure: e.pointerType === 'pen',
       engine: this.engineFor(tool),
+      ink: INK_PIPELINE,
     });
     this.active = {
       pointerId: e.pointerId,
@@ -1551,6 +1973,7 @@ export class HandNoteEditor {
       this.activeStable.style.opacity = String(params.opacity);
       this.activeTail.style.opacity = String(params.opacity);
     }
+    this.checkSnap();
     this.perf.strokeStart();
     this.diagnostics.strokeBegin(e.pointerType, e.timeStamp, e.pressure);
     this.addSample(e);
@@ -1584,6 +2007,27 @@ export class HandNoteEditor {
     this.perf.sample(e.timeStamp);
     if (e.pointerType === 'pen') this.perf.pressure.push(e.pressure);
     this.diagnostics.sample(e.timeStamp, e.pressure, e.pointerType);
+    a.builder.add(s);
+  }
+
+  /**
+   * The pointerup position (0.12). It reports pressure 0 on every platform, and is usually where
+   * the last move already was: added as it is, it shrank the end of the ink when the pen lifted —
+   * a change the live ink never showed. It is added only when the pen actually moved further, and
+   * then with the pressure it had.
+   */
+  private addLiftSample(e: PointerEvent): void {
+    const a = this.active;
+    if (!a) return;
+    const raw = a.builder.rawSamples;
+    const last = raw[raw.length - 1];
+    if (!last) {
+      this.addSample(e);
+      return;
+    }
+    const s = this.toSample(e, a);
+    if (Math.hypot(s.x - last.x, s.y - last.y) * this.cam.zoom < 0.5) return;
+    if (!(s.p > 0)) s.p = last.p;
     a.builder.add(s);
   }
 
@@ -1648,7 +2092,21 @@ export class HandNoteEditor {
       this.clearActive();
       return;
     }
-    if (a.drawShape && this.commitRecognizedShape(a, samples)) return;
+    if (a.drawShape) {
+      this.deferShape(a, samples);
+      return;
+    }
+    const stroke = this.strokeFrom(a, samples);
+    if (a.tool === 'highlighter' && this.settings.highlighterStraight) this.straightenHighlighter(stroke);
+    this.commitInk(a, stroke);
+  }
+
+  /**
+   * The finished stroke (0.12): its ink is the geometry the builder drew live (stored with the
+   * stroke, so a reload shows the same), not a rebuild from the samples — the stroke no longer
+   * shifts when the pen lifts. The quantized samples are kept for the eraser and recognition.
+   */
+  private strokeFrom(a: ActiveStroke, samples: InputSample[]): Stroke {
     const stroke: Stroke = {
       id: newId('s'),
       tool: a.tool,
@@ -1661,9 +2119,88 @@ export class HandNoteEditor {
       samples,
     };
     if (a.dash !== 'solid') stroke.dash = a.dash;
-    // Geometry from the stored (quantized) samples: exactly what a reload will show.
-    const g = buildStrokeGeometry(samples, stroke.tool, stroke.params, { zoom: stroke.zoom, hasPressure: stroke.hasPressure, engine: stroke.engine });
-    this.cache.set(stroke, g);
+    stroke.geom = a.builder.commitGeometry();
+    this.cache.set(stroke, geometryFromStored(stroke.geom));
+    return stroke;
+  }
+
+  /**
+   * Highlighter (0.12, like GoodNotes): a stroke that is nearly straight becomes exactly straight —
+   * the line the shape pen would recognise, at the highlighter's width. Its samples are replaced by
+   * points on that line (the eraser and the lasso work on them as on any stroke).
+   */
+  private straightenHighlighter(stroke: Stroke): void {
+    const rec = recognizeInk(stroke.samples, stroke.geom, stroke.zoom);
+    if (!rec || rec.kind !== 'line' || rec.arrowEnd || !rec.a || !rec.b) return;
+    const [ax, ay] = rec.a;
+    const [bx, by] = rec.b;
+    const len = Math.hypot(bx - ax, by - ay);
+    if (len <= 0) return;
+    const s0 = stroke.samples;
+    const n = Math.max(2, Math.min(200, Math.ceil(len / 2) + 1));
+    const t1 = s0[s0.length - 1].t;
+    stroke.samples = Array.from({ length: n }, (_, i) => {
+      const u = i / (n - 1);
+      return quantizeSample({ x: ax + (bx - ax) * u, y: ay + (by - ay) * u, p: 0.5, t: t1 * u });
+    });
+    const r = Math.max(0.05, stroke.params.width / 2);
+    stroke.geom = quantizeGeometry({ xs: [ax, bx], ys: [ay, by], rs: [r, r] });
+    this.cache.set(stroke, geometryFromStored(stroke.geom));
+  }
+
+  /**
+   * Shape pen, pen lifted (0.12): the ink stays on screen as drawn (painted onto the scene, the
+   * active layers are freed for the next stroke) and the full recognition runs after this frame,
+   * then replaces the ink with the shape — or commits the ink when it is not a shape. Lifting the
+   * pen no longer waits for the recognition.
+   */
+  private deferShape(a: ActiveStroke, samples: InputSample[]): void {
+    // the ink stays on the active layers exactly as drawn (final tail without the predicted points)
+    this.active = a;
+    this.renderActive();
+    this.active = null;
+    const p: PendingShape = { a, samples, raf: 0, timer: 0 };
+    const run = () => {
+      if (this.pendingShape === p) this.flushPendingShape();
+    };
+    // after the frame that shows the lifted ink; the timer covers a stalled requestAnimationFrame (iPad)
+    p.raf = window.requestAnimationFrame(() => {
+      window.clearTimeout(p.timer);
+      p.timer = window.setTimeout(run, 0);
+    });
+    p.timer = window.setTimeout(run, 120);
+    this.pendingShape = p;
+  }
+
+  /** Forget a lifted shape-pen stroke (the document is being replaced). */
+  private dropPendingShape(): void {
+    const p = this.pendingShape;
+    if (!p) return;
+    this.pendingShape = null;
+    window.cancelAnimationFrame(p.raf);
+    window.clearTimeout(p.timer);
+    this.clearActive();
+  }
+
+  /** Recognise the lifted shape-pen stroke now (also before anything else changes the note). */
+  private flushPendingShape(): void {
+    const p = this.pendingShape;
+    if (!p) return;
+    this.pendingShape = null;
+    window.cancelAnimationFrame(p.raf);
+    window.clearTimeout(p.timer);
+    if (this.closed) {
+      this.clearActive();
+      return;
+    }
+    if (this.commitRecognizedShape(p.a, p.samples)) return;
+    this.commitInk(p.a, this.strokeFrom(p.a, p.samples));
+  }
+
+  /** Add a finished ink stroke to its page (one undo step) and show it. */
+  private commitInk(a: ActiveStroke, stroke: Stroke): void {
+    const g = this.cache.get(stroke);
+    const samples = stroke.samples;
     this.diagnostics.strokeEnd(a.t0 + (samples[samples.length - 1]?.t ?? 0), g.rs);
     this.history.push(this.doc, { kind: 'add-strokes', pageId: a.page.page.id, strokes: [stroke] });
     const hasTextAbove = a.page.page.items.some((i) => i.type === 'text');
@@ -1683,11 +2220,23 @@ export class HandNoteEditor {
   private commitRecognizedShape(a: ActiveStroke, samples: InputSample[]): boolean {
     const page = a.page.page;
     // a separate "V" next to the end of an existing line / curve turns it into an arrow
-    const head = recognizeArrowHead(samples);
+    // recognition works in screen pixels: the zoom the stroke was written at
+    const zoom = a.builder.ctx.zoom;
+    const geom = a.builder.commitGeometry();
+    const head = recognizeInkArrowHead(samples, geom, zoom);
     if (head && this.attachArrowHead(a, head)) return true;
-    const rec = recognizeShape(samples);
+    const rec = recognizeInk(samples, geom, zoom);
     if (!rec) return false;
-    const strokeWidth = Math.max(0.6, Math.min(8, a.builder.params.width * 0.8));
+    const item = this.shapeItemFrom(a, rec);
+    const before = page.items;
+    this.diagnostics.strokeEnd(a.t0 + (samples[samples.length - 1]?.t ?? 0), null);
+    this.pushOp({ kind: 'set-items', pageId: page.id, before, after: [...before, item] });
+    this.clearActive();
+    return true;
+  }
+
+  /** The shape item a recognised stroke becomes (also drawn as the live preview). */
+  private shapeItemFrom(a: ActiveStroke, rec: RecognizedShape): ShapeItem {
     const item: ShapeItem = {
       id: newId('i'),
       type: 'shape',
@@ -1698,25 +2247,23 @@ export class HandNoteEditor {
       h: rec.h,
       created: a.created,
       stroke: a.color,
-      strokeWidth,
+      strokeWidth: Math.max(0.6, Math.min(8, a.builder.params.width * 0.8)),
       fill: null,
       fillOpacity: 1,
     };
     if (rec.points) item.points = rec.points;
+    if (rec.rot) item.rot = rec.rot;
     if (rec.a && rec.b) {
       item.a = rec.a;
       item.b = rec.b;
       if (rec.c) item.c = rec.c;
+      if (rec.c2) item.c2 = rec.c2;
       if (rec.pts) item.pts = rec.pts;
       item.arrowEnd = !!rec.arrowEnd;
       if (rec.arrowEnd) item.head = 'open';
     }
     if (a.dash !== 'solid') item.dash = a.dash;
-    const before = page.items;
-    this.diagnostics.strokeEnd(a.t0 + (samples[samples.length - 1]?.t ?? 0), null);
-    this.pushOp({ kind: 'set-items', pageId: page.id, before, after: [...before, item] });
-    this.clearActive();
-    return true;
+    return item;
   }
 
   /** Shape pen: add an arrow head to the connector end the "V" stroke points at. */
@@ -1775,8 +2322,10 @@ export class HandNoteEditor {
     const hlOnly = this.settings.eraserHighlighterOnly;
     let changed = false;
     const next: Stroke[] = [];
+    // whiteboard: test only the strokes near the eraser (no ink outline is built for the rest)
+    const near = page.board ? new Set(strokesIn(page, [Math.min(er.lastX, x) - radius, Math.min(er.lastY, y) - radius, Math.max(er.lastX, x) + radius, Math.max(er.lastY, y) + radius])) : null;
     for (const s of page.strokes) {
-      if (hlOnly && s.tool !== 'highlighter') {
+      if ((hlOnly && s.tool !== 'highlighter') || (near && !near.has(s))) {
         next.push(s);
         continue;
       }
@@ -1872,13 +2421,15 @@ export class HandNoteEditor {
       const target = at ? this.rects.find((x) => x.page.id === at.pageId) : undefined;
       const r = target ?? this.rects[this.currentPageIndex()];
       if (!r) return;
-      const maxW = r.w * 0.6;
-      const scale = Math.min(1, maxW / img.naturalWidth, (r.h * 0.5) / img.naturalHeight);
+      // a whiteboard has no page: size the image against the view instead
+      const room = this.boardMode ? { w: this.viewW / this.cam.zoom, h: this.viewH / this.cam.zoom } : { w: r.w, h: r.h };
+      const maxW = room.w * 0.6;
+      const scale = Math.min(1, maxW / img.naturalWidth, (room.h * 0.5) / img.naturalHeight);
       const w = Math.max(20, img.naturalWidth * scale);
       const h = Math.max(20, img.naturalHeight * scale);
       const view = target && at ? { cx: at.x, cy: at.y } : this.visibleRegion(r);
-      const cx = Math.min(r.w - w / 2, Math.max(w / 2, view.cx));
-      const cy = Math.min(r.h - h / 2, Math.max(h / 2, view.cy));
+      const cx = this.boardMode ? view.cx : Math.min(r.w - w / 2, Math.max(w / 2, view.cx));
+      const cy = this.boardMode ? view.cy : Math.min(r.h - h / 2, Math.max(h / 2, view.cy));
       const item: ImageItem = { id: newId('i'), type: 'image', x: cx - w / 2, y: cy - h / 2, w, h, created: Date.now(), src, natW: img.naturalWidth, natH: img.naturalHeight };
       const before = r.page.items;
       this.pushOp({ kind: 'set-items', pageId: r.page.id, before, after: [...before, item] });
@@ -1892,6 +2443,7 @@ export class HandNoteEditor {
   }
 
   private visibleRegion(r: PageRect): { cx: number; cy: number } {
+    if (this.boardMode) return { cx: this.cam.x + this.viewW / this.cam.zoom / 2 - r.x, cy: this.cam.y + this.viewH / this.cam.zoom / 2 - r.y };
     const x0 = Math.max(r.x, this.cam.x);
     const x1 = Math.min(r.x + r.w, this.cam.x + this.viewW / this.cam.zoom);
     const y0 = Math.max(r.y, this.cam.y);
@@ -1945,11 +2497,13 @@ export class HandNoteEditor {
     const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? this.viewH : 1;
     if (e.ctrlKey || e.metaKey) {
       const factor = Math.exp((-e.deltaY * unit) / 300);
-      this.setCamera(zoomAt(this.cam, this.cam.zoom * factor, local.x, local.y));
+      this.setCamera(zoomAt(this.cam, this.cam.zoom * factor, local.x, local.y, this.minZoom));
     } else {
       const dx = (e.shiftKey ? e.deltaY : e.deltaX) * unit;
       const dy = (e.shiftKey ? 0 : e.deltaY) * unit;
-      this.setCamera({ ...this.cam, x: this.cam.x + dx / this.cam.zoom, y: this.cam.y + dy / this.cam.zoom });
+      const want = { ...this.cam, x: this.cam.x + dx / this.cam.zoom, y: this.cam.y + dy / this.cam.zoom };
+      this.setCamera(want);
+      this.wheelPullStep(dy, this.pullOvershoot(want));
     }
     this.requestScene(true);
     this.updateToolbar();
@@ -1978,6 +2532,7 @@ export class HandNoteEditor {
       canRedo: this.history.canRedo,
       page: this.currentPageIndex(),
       pageCount: this.doc.pages.length,
+      board: this.boardMode ? { zoom: this.cam.zoom, frames: this.doc.pages[0]?.board?.frames.length ?? 0 } : undefined,
       readOnly: this.readOnly,
       penColor: s.pens[ink].color,
       palette,
@@ -2082,12 +2637,14 @@ export class HandNoteEditor {
         else if (g === 'shape') this.setTool('shape');
         else if (g === 'lasso') this.setTool('lasso');
         else if (g === 'laser') this.setTool('laser');
+        else if (g === 'hand') this.setTool('hand');
         else if (g === 'image') {
           if (cur !== 'image') this.setTool('image');
           this.pickImage();
         }
       },
       onPages: (anchor: HTMLElement) => this.openPagesPanel(anchor),
+      onPageLabel: (anchor: HTMLElement) => (this.boardMode ? this.openZoomMenu(anchor) : this.openGoToPage(anchor)),
       onStrokeStyle: (anchor: HTMLElement) => {
         const tool = isInkTool(this.settings.tool) ? this.settings.tool : this.settings.lastPen;
         const presets = this.settings.widthPresets[tool];
@@ -2126,8 +2683,8 @@ export class HandNoteEditor {
       },
       onUndo: () => this.undo(),
       onRedo: () => this.redo(),
-      onPrev: () => this.gotoPage(this.currentPageIndex() - 1),
-      onNext: () => this.gotoPage(this.currentPageIndex() + 1),
+      onPrev: () => (this.boardMode ? this.stepFrame(-1) : this.gotoPage(this.currentPageIndex() - 1)),
+      onNext: () => (this.boardMode ? this.stepFrame(1) : this.gotoPage(this.currentPageIndex() + 1)),
       onMore: (anchor: HTMLElement) => this.openMoreMenu(anchor),
       onPenKind: (k: PenKind, anchor: HTMLElement) => {
         const tool: InkTool = k === 'shapepen' ? 'fountain' : k;
@@ -2479,7 +3036,8 @@ export class HandNoteEditor {
     const last = page.strokes[page.strokes.length - 1];
     // a document page's thumbnail is redrawn once the page has been rendered (it starts as a placeholder)
     const doc = page.doc ? `|d${docPageReady(page.doc.src, page.doc.n) ? 1 : 0}` : '';
-    return `${page.strokes.length}|${last?.id ?? ''}|${page.items.length}|${page.width}x${page.height}|${page.background.kind}|${page.background.paper}${doc}`;
+    const frames = page.board ? `|f${page.board.frames.map((f) => `${f.x},${f.y}`).join(';')}` : '';
+    return `${page.strokes.length}|${last?.id ?? ''}|${page.items.length}|${page.width}x${page.height}|${page.background.kind}|${page.background.paper}${doc}${frames}`;
   }
 
   /**
@@ -2488,7 +3046,8 @@ export class HandNoteEditor {
    */
   pageThumb(page: Page, boxW: number, boxH: number): HTMLCanvasElement {
     const dpr = Math.min(2, this.dpr || 1);
-    const fit = Math.min(boxW / page.width, boxH / page.height);
+    const box = pageRenderBox(page, this.cache); // a whiteboard: its content bounds
+    const fit = Math.min(boxW / box.w, boxH / box.h);
     const scale = fit * dpr;
     const key = this.pageKey(page) + '|' + scale.toFixed(4);
     let c = this.thumbCache.get(page);
@@ -2499,9 +3058,9 @@ export class HandNoteEditor {
         c.canvas.remove();
       }
       const off = document.createElement('canvas');
-      renderPageToCanvas(off, page, this.cache, scale);
-      off.style.width = `${Math.round(page.width * fit)}px`;
-      off.style.height = `${Math.round(page.height * fit)}px`;
+      renderPageToCanvas(off, page, this.cache, scale, box);
+      off.style.width = `${Math.round(box.w * fit)}px`;
+      off.style.height = `${Math.round(box.h * fit)}px`;
       c = { key, strokes: page.strokes, items: page.items, canvas: off };
       this.thumbCache.set(page, c);
     }
@@ -2528,7 +3087,7 @@ export class HandNoteEditor {
         return pg ? this.pageThumb(pg, w, h) : null;
       },
       hasPageClipboard: () => pageClipboard !== null,
-      onGo: (i) => this.gotoPage(i),
+      onGo: (i) => (this.boardMode ? this.fitContent() : this.gotoPage(i)),
       onInsert: (at) => {
         this.addPageAt(at);
         this.gotoPage(at);
@@ -2553,6 +3112,14 @@ export class HandNoteEditor {
       onClear: (i) => this.clearPageAt(i),
       onDelete: (i) => this.deletePageAt(i),
       onClose: () => this.closePagesSidebar(),
+      hasContents: () => this.contentSources().length > 0,
+      contents: () => this.loadContents(),
+      board: () => this.boardMode,
+      onGoContents: (i) => {
+        if (!this.boardMode) return this.gotoPage(i);
+        const f = framesInOrder(this.doc.pages[0])[i];
+        if (f) this.showFrame(f.id);
+      },
     });
     this.sidebarCurrent = this.currentPageIndex();
     this.keepViewAcrossResize(() => {
@@ -2561,6 +3128,55 @@ export class HandNoteEditor {
     });
     this.toolbar.setPagesOpen(true);
     window.requestAnimationFrame(() => this.sidebar?.revealCurrent());
+  }
+
+  /** Imported documents of this note that can have contents (PDF), in page order. */
+  private contentSources(): DocSource[] {
+    const seen = new Set<string>();
+    const out: DocSource[] = [];
+    const docs = this.boardMode ? framesInOrder(this.doc.pages[0]).map((f) => f.doc) : this.doc.pages.map((p) => p.doc);
+    for (const d of docs) {
+      const id = d?.src;
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      const src = this.doc.sources?.[id];
+      if (src && src.kind === 'pdf') out.push(src);
+    }
+    return out;
+  }
+
+  /** The contents (bookmarks) of every PDF in the note, mapped to the note's pages. */
+  private async loadContents(): Promise<ContentsGroup[]> {
+    const groups: ContentsGroup[] = [];
+    for (const src of this.contentSources()) {
+      // source page n → first note page showing it
+      const where = new Map<number, number>();
+      // whiteboard: the frames in board order stand in for the pages
+      const docs = this.boardMode ? framesInOrder(this.doc.pages[0]).map((f) => f.doc) : this.doc.pages.map((p) => p.doc);
+      docs.forEach((d, i) => {
+        if (d?.src === src.id && !where.has(d.n)) where.set(d.n, i);
+      });
+      const map = (items: OutlineItem[]): ContentsEntry[] =>
+        items.map((o) => ({
+          title: o.title,
+          index: o.page === null ? null : (where.get(o.page) ?? null),
+          label: o.page === null ? '' : String(o.page),
+          items: map(o.items),
+        }));
+      try {
+        groups.push({ name: src.name, entries: map(await docOutline(src)) });
+      } catch (e) {
+        const missing = e instanceof DocError && e.code === 'missing';
+        groups.push({ name: src.name, entries: [], error: missing ? t('contentsMissing').replace('{name}', src.name) : String((e as Error)?.message ?? e) });
+      }
+    }
+    return groups;
+  }
+
+  /** Command "Show contents": open the page sidebar on its contents tab. */
+  openContents(): void {
+    if (!this.sidebar) this.openPagesPanel();
+    this.sidebar?.setMode('contents');
   }
 
   closePagesSidebar(): void {
@@ -2862,7 +3478,7 @@ export class HandNoteEditor {
       const page = this.pageForPoint(this.lastLocal);
       if (page) {
         const l = this.localOn(page, this.lastLocal);
-        if (l.x >= 0 && l.y >= 0 && l.x <= page.w && l.y <= page.h) return { r: page, x: l.x, y: l.y };
+        if (this.boardMode || (l.x >= 0 && l.y >= 0 && l.x <= page.w && l.y <= page.h)) return { r: page, x: l.x, y: l.y };
       }
     }
     const r = this.rects[this.currentPageIndex()];
@@ -2937,13 +3553,15 @@ export class HandNoteEditor {
     }
     const s = this.settings.text;
     const margin = 24;
-    const left = Math.max(margin / 2, Math.min(x, r.w - margin - s.size * 4));
-    const room = Math.max(s.size * 4, r.w - left - margin);
+    // whiteboard: wrap at about one A4 width from the point (there is no page edge)
+    const pageW = this.boardMode ? x + 595 : r.w;
+    const left = this.boardMode ? x : Math.max(margin / 2, Math.min(x, pageW - margin - s.size * 4));
+    const room = Math.max(s.size * 4, pageW - left - margin);
     let item: TextItem = fitTextBox({
       id: newId('i'),
       type: 'text',
       x: left,
-      y: Math.max(0, y - s.size * 0.75 - TEXT_PAD),
+      y: this.boardMode ? y - s.size * 0.75 - TEXT_PAD : Math.max(0, y - s.size * 0.75 - TEXT_PAD),
       w: s.size * 2,
       h: s.size * LINE_HEIGHT + TEXT_PAD * 2,
       created: Date.now(),
@@ -3077,11 +3695,13 @@ export class HandNoteEditor {
         tapGestures: this.settings.tapGestures,
         fingerDoubleTapEraser: this.settings.fingerDoubleTapEraser,
         usePrediction: this.settings.usePrediction,
+        highlighterStraight: this.settings.highlighterStraight,
         diagnostics: this.settings.diagnostics,
         hud: this.settings.showHud,
         canDeletePage: this.doc.pages.length > 1,
         readOnly: this.readOnly,
-        actions: this.host.menuActions ?? [],
+        board: this.boardMode,
+        actions: [...(this.host.menuActions ?? []), ...(this.boardMode && this.host.exportView ? [{ label: t('exportView'), run: () => this.host.exportView?.() }] : [])],
         onAddPage: () => this.addPageAfterCurrent(),
         onDeletePage: () => this.deleteCurrentPage(),
         onClearPage: () => this.clearCurrentPage(),
@@ -3128,6 +3748,8 @@ export class HandNoteEditor {
     const page = this.doc.pages[this.currentPageIndex()];
     if (!page) return;
     renderTemplatePanel(p.el, {
+      board: this.boardMode,
+      offerBoard: !this.boardMode && !this.readOnly,
       initial: this.templateOf(page),
       onApply: (c) => {
         this.closePopover();

@@ -28,7 +28,7 @@ HandNote 是 Obsidian 官方社区插件目录里的插件，在 Obsidian 内直
 每个文件的 SHA-256 写在版本说明里，版本还附有 GitHub 构建来源证明（attestation），可以用来核对下载的
 文件是否完整。
 
-> 使用 Obsidian Sync 标准版时注意：`main.js` 约 6.2 MB（识别运行库内置在插件里），标准版不同步超过 5 MB
+> 使用 Obsidian Sync 标准版时注意：`main.js` 约 6.3 MB（识别运行库内置在插件里），标准版不同步超过 5 MB
 > 的文件。请在每台设备上分别从社区插件目录安装 HandNote，笔记本身照常同步。
 
 ## 新建第一篇手写笔记
@@ -38,7 +38,7 @@ HandNote 是 Obsidian 官方社区插件目录里的插件，在 Obsidian 内直
 
 ![在文件夹上右键，菜单里有「新建 HandNote」](images/01-new-handnote-menu.png)
 
-默认放在当前打开的笔记旁边。可以在 **设置 → HandNote → New notes → Folder for new handwritten notes**
+默认放在当前打开的笔记旁边。可以在 **设置 → HandNote → 新建笔记 → 新手写笔记的文件夹**
 里指定专门的文件夹（不要用 `_` 或 `.` 开头的文件夹，Remotely Save 默认会跳过它们），并设置新笔记默认的
 纸张大小（Paper size）和页面背景（Page background：空白、横线、方格、点阵）。
 
@@ -46,7 +46,7 @@ HandNote 是 Obsidian 官方社区插件目录里的插件，在 Obsidian 内直
 
 书写、套索、导入文档、LaTeX 公式都不需要下载任何东西。只有「转换 → 文字」要用到识别模型。
 
-打开 **设置 → HandNote → 本地识别**：
+打开 **设置 → HandNote → 识别与 AI（点开）→ 本地识别**：
 
 | 识别包 | 大小 | 用途 |
 |---|---|---|
@@ -65,10 +65,10 @@ HandNote 是 Obsidian 官方社区插件目录里的插件，在 Obsidian 内直
 ## 可选：导入文档的存放位置
 
 从设备里选择的 PDF / Word / PowerPoint / Excel 原文件，会复制一份到仓库的 `HandNote imports` 文件夹。
-可以在 **设置 → HandNote → Imported documents → Folder for imported originals** 里修改；留空表示使用
+可以在 **设置 → HandNote → 图片、文档和嵌入 → 导入文档的原件文件夹** 里修改；留空表示使用
 Obsidian 的附件位置。已经在仓库里的文件会直接引用，不会再复制。
 
-![设置里的 Imported documents 一节](images/15-settings-import.png)
+![设置里导入文档文件夹的位置（截图来自旧版本，选项现在在「图片、文档和嵌入」一组里）](images/15-settings-import.png)
 
 ## 可选：MyScript 和 AI 服务
 

@@ -12,7 +12,7 @@
 import { FuzzySuggestModal, Modal, Notice, Platform, TFile, loadPdfJs, normalizePath, type App } from 'obsidian';
 import { serializeDocument } from '../document/codec';
 import { createDocument, type DocKind, type DocSource } from '../document/model';
-import { DocError, docCacheStats, forgetSource, markSourceFailed, setDocCacheBudget, setDocRenderer, sourceById, type DocPageRenderer, type RenderedPage } from '../rendering/doc-layer';
+import { DocError, docCacheStats, forgetSource, markSourceFailed, setDocCacheBudget, setDocRenderer, sourceById, type DocPageRenderer, type OutlineItem, type RenderedPage } from '../rendering/doc-layer';
 import { LIMITS, describeBytes, detectFormat, sha256Hex } from '../import/detect';
 import { PdfRenderer, openPdf, pdfPageSizes, type PdfJsLib } from '../import/pdf';
 import { documentPages, makeSource } from '../import/pages';
@@ -303,6 +303,9 @@ class Renderers implements DocPageRenderer {
     if (src.kind === 'pdf') return this.pdf.render(src, n, w, h, signal);
     if (LAID_OUT.includes(src.kind)) return this.office.render(src, n, w, h, signal);
     return Promise.reject(new DocError('unsupported', `${src.kind.toUpperCase()} pages are not supported by this version`));
+  }
+  outline(src: DocSource): Promise<OutlineItem[]> {
+    return src.kind === 'pdf' ? this.pdf.outline(src) : Promise.resolve([]);
   }
 }
 

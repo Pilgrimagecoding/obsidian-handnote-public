@@ -19,8 +19,12 @@ export const FORMAT_ID = 'obsidian-handnote';
  *      original file kept in the vault and referenced by `sources`). Files without them are still
  *      written as version 1–5, so 0.8 keeps editing them; 0.8 opens a v6 file read-only instead of
  *      dropping the page references on save.
+ *  7 — v0.11 infinite whiteboards: a document with a single page that carries `board` (an
+ *      unbounded canvas; coordinates may be negative; converted pages become `frames`). Notes with
+ *      pages are never written as version 7, so undoing a conversion writes the old version again;
+ *      0.10 and older open a whiteboard read-only.
  */
-export const FORMAT_VERSION = 6;
+export const FORMAT_VERSION = 7;
 /** Default geometry engine (v0.1 Baseline). */
 export const ENGINE_VERSION = 1;
 /** Fountain Pen Experimental (v0.2). */
@@ -38,6 +42,18 @@ export interface PageBackground {
   paper: string;
   /** Line color. */
   line: string;
+}
+
+/**
+ * The ink of a stroke as it was drawn (0.12): centerline points with their radius, page units.
+ * Rendering uses exactly this — the same data the live preview showed — instead of re-running the
+ * stroke builder on the stored samples (which made every stroke shift a little when the pen lifted).
+ * `samples` stay alongside for the eraser, recognition and older versions of the plugin.
+ */
+export interface StoredGeometry {
+  xs: number[];
+  ys: number[];
+  rs: number[];
 }
 
 export interface Stroke {
@@ -58,6 +74,8 @@ export interface Stroke {
   dash?: StrokeDash;
   /** Group id (v4): strokes and items with the same id are selected and moved together. */
   g?: string;
+  /** The ink as drawn (0.12); absent for older strokes and eraser fragments (built from samples). */
+  geom?: StoredGeometry;
 }
 
 /** Dashed / dotted line style of ink strokes and connectors. Solid is the absence of the field. */
@@ -110,6 +128,27 @@ export interface PageDoc {
   n: number;
 }
 
+/**
+ * A page frame on a whiteboard (v7): a former page of a note converted to a whiteboard, kept as a
+ * piece of paper (and optionally an imported document page) at (x, y) on the board.
+ */
+export interface BoardFrame {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  background: PageBackground;
+  doc?: PageDoc;
+}
+
+/** Whiteboard data of a page (v7). */
+export interface Board {
+  /** Top-left of the content bounds; `Page.width/height` is their size (recomputed on save). */
+  origin: [number, number];
+  frames: BoardFrame[];
+}
+
 export interface Page {
   id: string;
   width: number;
@@ -117,6 +156,11 @@ export interface Page {
   background: PageBackground;
   /** Imported document page painted under everything else (v6). Page units = the source's points. */
   doc?: PageDoc;
+  /**
+   * Present = this page is an infinite whiteboard (v7). A whiteboard document has exactly this one
+   * page; `background` is the board's own texture, painted over the whole canvas.
+   */
+  board?: Board;
   strokes: Stroke[];
   /** Text boxes, images and shapes (format v3). Painted: images, shapes, ink, then text. */
   items: Item[];

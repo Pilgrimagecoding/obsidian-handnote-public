@@ -70,6 +70,7 @@ const P: Record<string, string> = {
   lasso: '<path d="M7 16.5c-2.6-1.2-4-3-4-5.2C3 7.3 7 4 12 4s9 3.3 9 7.3-4 7.2-9 7.2c-1 0-2-.1-2.9-.4" stroke-dasharray="2.6 2.4"/><path d="M8.6 15.4c1.4.4 2 1.6 1.2 2.7-.8 1.2-2.6 1.4-3.6.6"/><path d="M7.2 18.7l-.6 2.3"/>',
   'lasso-rect': '<rect x="3.5" y="4.5" width="17" height="13" rx="1" stroke-dasharray="2.6 2.4"/><path d="M14 15.5l5 5M14 15.5v4M14 15.5h4"/>',
   laser: '<circle cx="16.5" cy="7.5" r="3" fill="currentColor" stroke="none" opacity="0.9"/><circle cx="16.5" cy="7.5" r="5" opacity="0.35"/><path d="M3.5 20.5l8-8"/><path d="M5.5 16.5l2 2"/>',
+  hand: '<path d="M8 12.5V6.2a1.5 1.5 0 013 0V11"/><path d="M11 10.5V4.7a1.5 1.5 0 013 0v5.8"/><path d="M14 10.5V6.2a1.5 1.5 0 013 0v6.3"/><path d="M8 12.5l-1.4-1.6a1.6 1.6 0 00-2.4 2.1l3.3 4.6A6 6 0 0012.4 20H13a5 5 0 005-5v-4.3a1.5 1.5 0 00-1-1.4"/>',
   'laser-dot': '<circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="6.5" opacity="0.4"/>',
   'laser-trail': '<path d="M3.5 17c3-6 6-8 9-5s5.5 1 8-5" opacity="0.55"/><circle cx="20.2" cy="6.6" r="2.2" fill="currentColor" stroke="none"/>',
   'stroke-solid': '<path d="M3.5 12h17" stroke-width="2.4"/>',

@@ -7,7 +7,7 @@
  * Only the small subset of the PDF.js API used here is typed (it is stable across PDF.js 2–5).
  */
 import type { DocSource } from '../document/model';
-import { DocError, type DocPageRenderer, type RenderedPage } from '../rendering/doc-layer';
+import { DocError, type DocPageRenderer, type OutlineItem, type RenderedPage } from '../rendering/doc-layer';
 import { LIMITS } from './detect';
 
 export interface PdfViewport {
@@ -20,10 +20,62 @@ export interface PdfPage {
   render(o: { canvasContext: CanvasRenderingContext2D; viewport: PdfViewport; background?: string; annotationMode?: number; intent?: string }): { promise: Promise<void>; cancel(): void };
   cleanup?(): void;
 }
+/** A PDF.js outline (bookmark) node; `dest` is a named destination or an explicit array. */
+export interface PdfOutlineNode {
+  title: string;
+  dest: string | unknown[] | null;
+  items?: PdfOutlineNode[];
+}
 export interface PdfDocument {
   numPages: number;
   getPage(n: number): Promise<PdfPage>;
   destroy(): Promise<void> | void;
+  getOutline?(): Promise<PdfOutlineNode[] | null>;
+  getDestination?(name: string): Promise<unknown[] | null>;
+  getPageIndex?(ref: unknown): Promise<number>;
+}
+
+/** Bookmarks deeper than this, or more than this many in total, are not shown. */
+const OUTLINE_MAX_DEPTH = 8;
+const OUTLINE_MAX_ITEMS = 2000;
+
+/**
+ * The PDF's bookmarks with 1-based target pages (null when a bookmark points nowhere usable: a
+ * web link, a broken destination). Titles are plain text, trimmed to 300 characters.
+ */
+export async function pdfOutline(doc: PdfDocument): Promise<OutlineItem[]> {
+  if (!doc.getOutline) return [];
+  const raw = await doc.getOutline().catch(() => null);
+  if (!raw?.length) return [];
+  let count = 0;
+  const pageOf = async (dest: PdfOutlineNode['dest']): Promise<number | null> => {
+    try {
+      let arr: unknown[] | null = null;
+      if (typeof dest === 'string') arr = doc.getDestination ? await doc.getDestination(dest) : null;
+      else if (Array.isArray(dest)) arr = dest;
+      const ref = arr?.[0];
+      if (ref == null) return null;
+      let index: number | null = null;
+      if (typeof ref === 'number') index = ref; // some writers store a page index instead of a reference
+      else if (typeof ref === 'object' && doc.getPageIndex) index = await doc.getPageIndex(ref);
+      if (index === null || !Number.isInteger(index) || index < 0 || index >= doc.numPages) return null;
+      return index + 1;
+    } catch {
+      return null;
+    }
+  };
+  const walk = async (nodes: PdfOutlineNode[], depth: number): Promise<OutlineItem[]> => {
+    const out: OutlineItem[] = [];
+    for (const n of nodes) {
+      if (count >= OUTLINE_MAX_ITEMS) break;
+      count++;
+      const title = String(n.title ?? '').replace(/\s+/g, ' ').trim().slice(0, 300) || '…';
+      const items = depth < OUTLINE_MAX_DEPTH && n.items?.length ? await walk(n.items, depth + 1) : [];
+      out.push({ title, page: await pageOf(n.dest), items });
+    }
+    return out;
+  };
+  return walk(raw, 1);
 }
 export interface PdfJsLib {
   getDocument(src: Record<string, unknown>): { promise: Promise<PdfDocument>; destroy?(): void; onPassword?: unknown };
@@ -130,6 +182,11 @@ export class PdfRenderer implements DocPageRenderer {
         canvas.height = 0;
       },
     };
+  }
+
+  async outline(src: DocSource): Promise<OutlineItem[]> {
+    if (src.kind !== 'pdf') return [];
+    return pdfOutline(await this.docFor(src));
   }
 
   /** Close every open document (plugin unload). */

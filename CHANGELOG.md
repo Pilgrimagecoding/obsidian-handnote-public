@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.11.0 — 2026-11-05
+
+Built from the same sources as the private test builds 0.10.0-beta.1 and 0.11.0-beta.1 … beta.5
+(tested on the iPad), public edition. Release notes: `docs/release-notes/0.11.0.md`.
+
+- **Infinite whiteboard** (format 7): new from the ribbon menu or a command; convert a note with
+  pages into page frames on one canvas (one undo step); frames move with the lasso; zoom 10 %;
+  show all / frame navigation / back to content; export whole board or current view; embeds; grid
+  index and simplified drawing for large boards; dotted texture drawn from a cached tile.
+- **Stored ink**: `Stroke.geom` keeps the drawn centerline + radius (delta-encoded `geo`, `genc:
+  'g1'`) beside the samples; rendering uses it, so nothing moves on lift and a reload matches.
+  Eraser pieces regenerate their ink from their samples; lasso and whiteboard conversion transform
+  it. Older strokes are rebuilt from samples exactly as before.
+- **Ink pipeline for new strokes** (`StrokeContext.ink = 2`): light One Euro filter + symmetric
+  Gaussian centerline smoothing (pressure and speed in the same window), bend-limited, corners kept;
+  spline sampled per screen pixel live and at 0.1 unit on lift; smoothed nib direction; no exit
+  taper on lift.
+- **Outline**: offset outline with round caps per smooth run, capsules at sharp turns; one nonzero
+  fill, same path for SVG.
+- Jump on lift fixed: canvases snapped to device pixels (scene overscan a multiple of 8, viewport
+  sub-pixel offset applied to every canvas); pointerup sample (pressure 0) no longer appended.
+- Zoom up to 2400 %; mid-pinch re-render when the scene is stretched > 1.4× and the render is cheap
+  or the fingers pause; canvases follow devicePixelRatio changes.
+- **Shape pen**: no live preview; recognition after lift, in screen pixels, on the smoothed ink
+  first; size-adaptive thresholds; lenient lines (bow ≤ 10 %), cubic curves (U, S, J), V / `<`
+  polylines, tilted ellipses / rectangles (`rot`), 5–8 sided polygons snapped to regular.
+- Highlighter: nearly straight strokes become straight (setting, on by default).
+- Navigation (0.10): hand tool (H), commands for every tool and page action, go to page, PDF
+  contents tab, pull past the last page to add one.
+- Settings tab regrouped and localized; recognition / AI and advanced options folded.
+
 ## 0.9.1 — 2026-11-01
 
 Release notes: `docs/release-notes/0.9.1.md`.

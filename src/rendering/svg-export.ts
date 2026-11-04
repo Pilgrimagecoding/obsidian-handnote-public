@@ -1,4 +1,5 @@
-import type { Page, Stroke } from '../document/model';
+import type { Page, PageBackground, Stroke } from '../document/model';
+import { pageRenderBox } from './paint';
 import type { GeometryCache } from '../document/geometry-cache';
 import { SvgPathSink, emitGeometry } from '../ink/outline';
 import { arrowEnds, arrowTangents, connectorPoints, isLine, itemCenter, shapeOutline, type Item, type Pt, type ShapeItem } from '../document/items';
@@ -34,7 +35,8 @@ function shapeSvg(it: ShapeItem): string {
   const stroke = `stroke="${esc(it.stroke)}" stroke-width="${f2(it.strokeWidth)}" stroke-linejoin="round" stroke-linecap="round"${dashAttr(it)}`;
   if (isLine(it)) {
     let d: string;
-    if (it.kind === 'curve' && it.c) d = `M${f2(it.a[0])} ${f2(it.a[1])}Q${f2(it.c[0])} ${f2(it.c[1])} ${f2(it.b[0])} ${f2(it.b[1])}`;
+    if (it.kind === 'curve' && it.c && it.c2) d = `M${f2(it.a[0])} ${f2(it.a[1])}C${f2(it.c[0])} ${f2(it.c[1])} ${f2(it.c2[0])} ${f2(it.c2[1])} ${f2(it.b[0])} ${f2(it.b[1])}`;
+    else if (it.kind === 'curve' && it.c) d = `M${f2(it.a[0])} ${f2(it.a[1])}Q${f2(it.c[0])} ${f2(it.c[1])} ${f2(it.b[0])} ${f2(it.b[1])}`;
     else d = connectorPoints(it).map((p, i) => `${i ? 'L' : 'M'}${f2(p[0])} ${f2(p[1])}`).join('');
     const ends = arrowEnds(it);
     const tan = arrowTangents(it);
@@ -141,30 +143,50 @@ function esc(s: string): string {
 }
 
 /** Export one page as a standalone SVG document (vector, 1 unit = 1 pt). */
+/** Texture lines / dots over [x0, x1] × [y0, y1] (aligned to the origin of the coordinates). */
+function patternSvg(bg: PageBackground, x0: number, y0: number, x1: number, y1: number, inPage: boolean): string {
+  let sp = bg.spacing;
+  // keep a whiteboard's pattern to a sane number of elements (it can be very large)
+  if (!inPage) while (((x1 - x0) / sp) * ((y1 - y0) / sp) > 60000 && sp < 1e7) sp *= 2;
+  const fromY = (k: number) => (inPage ? k * sp : Math.ceil(y0 / sp) * sp);
+  const fromX = inPage ? sp : Math.ceil(x0 / sp) * sp;
+  const d: string[] = [];
+  if (bg.kind === 'ruled') {
+    for (let y = fromY(3); y < y1 - (inPage ? sp * 0.5 : 0); y += sp) d.push(`M${f2(x0)} ${y.toFixed(2)}H${f2(x1)}`);
+    return `<path d="${d.join('')}" stroke="${esc(bg.line)}" stroke-width="0.5" fill="none"/>`;
+  }
+  if (bg.kind === 'grid') {
+    for (let y = fromY(1); y < y1; y += sp) d.push(`M${f2(x0)} ${y.toFixed(2)}H${f2(x1)}`);
+    for (let x = fromX; x < x1; x += sp) d.push(`M${x.toFixed(2)} ${f2(y0)}V${f2(y1)}`);
+    return `<path d="${d.join('')}" stroke="${esc(bg.line)}" stroke-width="0.4" fill="none"/>`;
+  }
+  if (bg.kind === 'dots') {
+    for (let y = fromY(1); y < y1; y += sp) for (let x = fromX; x < x1; x += sp) d.push(`M${x.toFixed(2)} ${y.toFixed(2)}h0`);
+    return `<path d="${d.join('')}" stroke="${esc(bg.line)}" stroke-width="1" stroke-linecap="round" fill="none"/>`;
+  }
+  return '';
+}
+
+/** Export one page as a standalone SVG document (vector, 1 unit = 1 pt). A whiteboard: its content bounds. */
 export function pageToSvg(page: Page, cache: GeometryCache, opts: { background?: boolean } = {}): string {
-  const w = page.width;
-  const h = page.height;
+  const box = pageRenderBox(page);
+  const w = f2(box.w);
+  const h = f2(box.h);
   const parts: string[] = [];
-  parts.push(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${w}pt" height="${h}pt" viewBox="0 0 ${w} ${h}">`,
-  );
+  parts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}pt" height="${h}pt" viewBox="${f2(box.x)} ${f2(box.y)} ${w} ${h}">`);
   if (opts.background !== false) {
-    parts.push(`<rect width="${w}" height="${h}" fill="${esc(page.background.paper)}"/>`);
-    const bg = page.background;
-    const sp = bg.spacing;
-    if (bg.kind === 'ruled') {
-      const d: string[] = [];
-      for (let y = sp * 3; y < h - sp * 0.5; y += sp) d.push(`M0 ${y.toFixed(2)}H${w}`);
-      parts.push(`<path d="${d.join('')}" stroke="${esc(bg.line)}" stroke-width="0.5" fill="none"/>`);
-    } else if (bg.kind === 'grid') {
-      const d: string[] = [];
-      for (let y = sp; y < h; y += sp) d.push(`M0 ${y.toFixed(2)}H${w}`);
-      for (let x = sp; x < w; x += sp) d.push(`M${x.toFixed(2)} 0V${h}`);
-      parts.push(`<path d="${d.join('')}" stroke="${esc(bg.line)}" stroke-width="0.4" fill="none"/>`);
-    } else if (bg.kind === 'dots') {
-      const d: string[] = [];
-      for (let y = sp; y < h; y += sp) for (let x = sp; x < w; x += sp) d.push(`M${x.toFixed(2)} ${y.toFixed(2)}h0`);
-      parts.push(`<path d="${d.join('')}" stroke="${esc(bg.line)}" stroke-width="1" stroke-linecap="round" fill="none"/>`);
+    if (page.board) {
+      const x1 = box.x + box.w;
+      const y1 = box.y + box.h;
+      parts.push(`<rect x="${f2(box.x)}" y="${f2(box.y)}" width="${w}" height="${h}" fill="${esc(page.background.paper)}"/>`);
+      parts.push(patternSvg(page.background, box.x, box.y, x1, y1, false));
+      // page frames: paper + their own pattern (an imported document page is not embedded)
+      for (const f of page.board.frames) {
+        parts.push(`<g transform="translate(${f2(f.x)} ${f2(f.y)})"><rect width="${f2(f.width)}" height="${f2(f.height)}" fill="${esc(f.background.paper)}" stroke="#00000022" stroke-width="0.5"/>${patternSvg(f.background, 0, 0, f.width, f.height, true)}</g>`);
+      }
+    } else {
+      parts.push(`<rect width="${w}" height="${h}" fill="${esc(page.background.paper)}"/>`);
+      parts.push(patternSvg(page.background, 0, 0, box.w, box.h, true));
     }
   }
   parts.push('<g>');

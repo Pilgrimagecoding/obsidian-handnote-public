@@ -14,8 +14,11 @@
 export type InkTool = 'fountain' | 'pencil' | 'ballpoint' | 'highlighter';
 /** Object tools create and edit text boxes, images and shapes. */
 export type ObjectTool = 'text' | 'image' | 'shape';
-/** Lasso selects ink and objects; the laser pointer only draws a fading trail (never saved). */
-export type Tool = InkTool | 'eraser' | ObjectTool | 'lasso' | 'laser';
+/**
+ * Lasso selects ink and objects; the laser pointer only draws a fading trail (never saved); the
+ * hand moves the page with any pointer (pen, mouse, finger) and never writes.
+ */
+export type Tool = InkTool | 'eraser' | ObjectTool | 'lasso' | 'laser' | 'hand';
 
 export function isInkTool(t: Tool): t is InkTool {
   return t === 'fountain' || t === 'pencil' || t === 'ballpoint' || t === 'highlighter';
@@ -91,4 +94,9 @@ export interface StrokeContext {
   /** The stroke start / end was cut by the partial eraser: no synthetic taper there. */
   cutStart?: boolean;
   cutEnd?: boolean;
+  /**
+   * Ink pipeline (0.12): 2 = light noise filter + symmetric centerline smoothing, fine spline
+   * steps, smoothed nib direction. Absent for strokes written before (rebuilt exactly as before).
+   */
+  ink?: number;
 }

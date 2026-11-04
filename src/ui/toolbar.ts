@@ -9,7 +9,7 @@ import { t } from './i18n';
 import { onTap } from './tap';
 
 /** Top-level tool groups of the main toolbar. */
-export type ToolGroup = 'lasso' | 'pen' | 'eraser' | 'text' | 'image' | 'shape' | 'laser';
+export type ToolGroup = 'lasso' | 'pen' | 'eraser' | 'text' | 'image' | 'shape' | 'laser' | 'hand';
 
 export function groupOf(tool: Tool): ToolGroup {
   if (isInkTool(tool)) return 'pen';
@@ -25,6 +25,8 @@ export interface ToolbarActions {
   onRedo(): void;
   onPrev(): void;
   onNext(): void;
+  /** tap on the page number: go to page */
+  onPageLabel(anchor: HTMLElement): void;
   onMore(anchor: HTMLElement): void;
   // pen sub-bar
   onPenKind(k: PenKind, anchor: HTMLElement): void;
@@ -65,6 +67,8 @@ export interface ToolbarState {
   canRedo: boolean;
   page: number;
   pageCount: number;
+  /** Whiteboard (0.11): the page number becomes the zoom; prev / next step through frames. */
+  board?: { zoom: number; frames: number };
   readOnly: boolean;
   penColor: string;
   palette: string[];
@@ -88,6 +92,7 @@ const GROUPS: { g: ToolGroup; icon: string; label: string }[] = [
   { g: 'image', icon: 'image', label: 'image' },
   { g: 'shape', icon: 'shapes', label: 'shapes' },
   { g: 'laser', icon: 'laser', label: 'laser' },
+  { g: 'hand', icon: 'hand', label: 'handTool' },
 ];
 
 const MM = 72 / 25.4;
@@ -177,7 +182,11 @@ export class Toolbar {
     }
     const right = el('div', 'hn-group hn-right', this.el);
     this.prevBtn = toolButton(right, 'chevron-up', t('prevPage'), 'hn-prev', () => a.onPrev());
-    this.pageLabel = el('span', 'hn-page-label', right, '1/1');
+    this.pageLabel = el('button', 'hn-page-label', right, '1/1');
+    (this.pageLabel as HTMLButtonElement).type = 'button';
+    this.pageLabel.title = t('goToPage');
+    this.pageLabel.setAttribute('aria-label', t('goToPage'));
+    onTap(this.pageLabel, () => a.onPageLabel(this.pageLabel));
     this.nextBtn = toolButton(right, 'chevron-down', t('nextPage'), 'hn-next', () => a.onNext());
     this.statusEl = el('span', 'hn-status', right);
     this.statusEl.dataset.status = 'saved';
@@ -190,11 +199,16 @@ export class Toolbar {
     this.mode = mode;
     this.el.classList.toggle('is-mouse', mode === 'mouse');
     this.sub.classList.toggle('is-mouse', mode === 'mouse');
-    const keys: Partial<Record<ToolGroup, string>> = { lasso: 'L', pen: '1', eraser: 'E', text: 'T' };
+    const keys: Partial<Record<ToolGroup, string>> = { lasso: 'L', pen: '1', eraser: 'E', text: 'T', hand: 'H' };
     for (const [g, b] of this.groupBtns) {
       const base = t(GROUPS.find((x) => x.g === g)?.label ?? g);
       b.title = mode === 'mouse' && keys[g] ? `${base} (${keys[g]})` : base;
     }
+  }
+
+  /** The page number button (anchor of the go-to-page panel). */
+  get pageLabelEl(): HTMLElement {
+    return this.pageLabel;
   }
 
   /** The pages button shows the navigator's open state. */
@@ -211,15 +225,27 @@ export class Toolbar {
     const g = groupOf(s.tool);
     for (const [k, b] of this.groupBtns) {
       setSelected(b, k === g);
-      b.disabled = s.readOnly && k !== 'pen' && k !== 'laser' && k !== 'lasso';
+      b.disabled = s.readOnly && k !== 'pen' && k !== 'laser' && k !== 'lasso' && k !== 'hand';
     }
     this.undoBtn.disabled = !s.canUndo || s.readOnly;
     this.redoBtn.disabled = !s.canRedo || s.readOnly;
-    this.prevBtn.disabled = s.page <= 0;
-    this.nextBtn.disabled = s.page >= s.pageCount - 1;
-    this.pageLabel.textContent = `${s.page + 1}/${s.pageCount}`;
+    if (s.board) {
+      this.prevBtn.disabled = this.nextBtn.disabled = s.board.frames === 0;
+      this.pageLabel.textContent = `${Math.round(s.board.zoom * 100)}%`;
+      this.pageLabel.title = t('board');
+      this.prevBtn.title = t('cmd.prevFrame');
+      this.nextBtn.title = t('cmd.nextFrame');
+    } else {
+      this.prevBtn.disabled = s.page <= 0;
+      this.nextBtn.disabled = s.page >= s.pageCount - 1;
+      this.pageLabel.textContent = `${s.page + 1}/${s.pageCount}`;
+      this.pageLabel.title = t('goToPage');
+      this.prevBtn.title = t('prevPage');
+      this.nextBtn.title = t('nextPage');
+    }
     void this.pagesBtn;
-    const show = s.subbarOpen && !s.readOnly;
+    // the hand has no options: no sub-bar
+    const show = s.subbarOpen && !s.readOnly && g !== 'hand';
     this.sub.classList.toggle('is-hidden', !show);
     const key = JSON.stringify([g, s.tool, s.drawShape, s.penColor, s.palette, s.widthPresets, s.width, s.penDash, s.eraserMode, s.eraserSize, s.highlighterOnly, s.shape, s.text, s.lasso, s.laser, show, this.mode]);
     if (key !== this.subKey) {
@@ -240,7 +266,7 @@ export class Toolbar {
     else if (g === 'image') this.imageSub();
     else if (g === 'lasso') this.lassoSub(s);
     else if (g === 'laser') this.laserSub(s);
-    else this.shapeSub(s);
+    else if (g === 'shape') this.shapeSub(s);
   }
 
   private sep(): void {

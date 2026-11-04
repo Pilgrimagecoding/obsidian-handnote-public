@@ -24,9 +24,12 @@ document import and a voice-over is [on YouTube](https://www.youtube.com/watch?v
 
 ## Write like on paper
 
-Pressure-sensitive fountain pen, pencil, highlighter, dashed strokes, a shape pen that straightens
-lines, arrows, circles and rectangles, and a laser pointer. Pages come in A4, A5, A3 or Letter with
-blank, ruled, grid or dotted paper.
+Pressure-sensitive fountain pen, pencil, highlighter, dashed strokes and a laser pointer. The ink
+is smoothed without lagging behind the pen and stays exactly where you wrote it when you lift the
+pen; zoom in up to 2400 %. The shape pen turns casual strokes into lines, arrows, curves,
+rectangles, ellipses (also tilted), triangles and regular polygons, and a nearly straight
+highlighter stroke becomes a straight line. Pages come in A4, A5, A3 or Letter with blank, ruled,
+grid or dotted paper.
 
 ![A handwritten lecture page in Obsidian: title, heading, two equations, Chinese and English lines and a vector sketch, with the pen toolbar open](assets/screenshots/desktop/01-handwriting.png)
 
@@ -77,6 +80,20 @@ box or insert an image right there.
 
 ![The page sidebar with three page thumbnails — ruled, grid and dotted paper — next to the open lecture page](assets/screenshots/desktop/04-pages.png)
 
+## Infinite whiteboard
+
+Next to notes with pages, HandNote makes **infinite whiteboards** (ribbon icon → *Infinite
+whiteboard*): one canvas without edges, dotted by default, zoom out to 10 %. A note with pages can
+be turned into a whiteboard in one step (undo brings it back): its pages become page frames, laid
+out from left to right with their paper, imported documents and ink, and the lasso moves a whole
+frame. Export the whole board or the current view as an image, or embed it in Markdown.
+
+## Find your way
+
+A hand tool (H) that only moves the page, a command for every tool and page action (give them
+hotkeys in Settings → Hotkeys), go to page by tapping the page counter, a contents tab for PDFs with
+bookmarks, and pull past the last page to add a new one.
+
 ## Plain files in your vault
 
 Every note is a `.handnote` file in your vault, synced by whatever you already use. Embed a page in
@@ -122,6 +139,8 @@ or newer.
   model download (15.8 MB / 7.5 MB). A built-in offline engine also reads neat Chinese.
 - **Can I annotate documents?** Yes, since 0.9.0: PDF, Word (.docx, .doc), PowerPoint (.pptx) and
   Excel (.xlsx). The original file is not changed and nothing is uploaded.
+- **Is there an infinite canvas?** Yes, since 0.11.0: infinite whiteboards, and any note with
+  pages can be turned into one.
 - **Is there on-device handwritten-math recognition?** No. Type formulas as LaTeX with a live
   preview, or use MyScript with your own keys.
 - **Is it free?** Yes, MIT-licensed, with no account, subscription or telemetry. Optional cloud
@@ -133,7 +152,7 @@ or newer.
 | Action | Pencil / pen | Finger | Mouse / keyboard |
 |---|---|---|---|
 | Write | draw | — (unless "finger drawing" is on) | drag |
-| Pan / zoom | desktop pen tablet: Space + drag, or a pen button set to middle click | one-finger drag / pinch | space + drag, Ctrl + wheel |
+| Pan / zoom | hand tool; desktop pen tablet: Space + drag, or a pen button set to middle click | one-finger drag / pinch | hand tool (H), space + drag, Ctrl + wheel |
 | Undo / redo | — | two- / three-finger tap | Ctrl+Z / Ctrl+Shift+Z |
 | Edit a text | tap it (lasso or text tool) | tap it | click it (lasso or text tool) |
 | Pen ⇄ eraser | — | double-tap with one finger | 1 / E |
@@ -143,7 +162,7 @@ or newer.
 
 ## On-device recognition and model downloads
 
-Settings → HandNote → **Local recognition**. The recognition runtime (ONNX Runtime Web 1.24.2, MIT)
+Settings → HandNote → Recognition and AI → **Local recognition**. The recognition runtime (ONNX Runtime Web 1.24.2, MIT)
 is **built into the plugin**; it is never downloaded and starts only when you convert. The
 recognition **models are not built in**: each one is downloaded separately, and only when you ask.
 
@@ -202,9 +221,12 @@ purpose, data sent, cost, offline behaviour — is listed in [PRIVACY.md](PRIVAC
   page breaks and fonts can differ slightly, and charts, SmartArt, animations, headers / footers and
   footnotes are not shown. Older .ppt / .xls must be saved as .pptx / .xlsx or PDF first. Office
   files get a small `.handnote-layout.json` beside them — let your sync tool sync it.
-- Notes with imported pages use file format 6: HandNote 0.8.x opens them read-only.
+- Notes with imported pages use file format 6: HandNote 0.8.x opens them read-only. Whiteboards
+  and the curve shapes added in 0.11 use format 7: HandNote 0.10 and older open them read-only.
+- Handwriting written with 0.11 or newer also stores the drawn ink, so those notes are about
+  1.6–1.9 times larger than before.
 - Phone layouts are not optimised.
-- `main.js` is about 6.2 MB because the recognition runtime is built in. Obsidian Sync's Standard
+- `main.js` is about 6.3 MB because the recognition runtime is built in. Obsidian Sync's Standard
   plan does not sync files over 5 MB, so with that plan install HandNote on each device from
   Community plugins (your notes sync as usual).
 

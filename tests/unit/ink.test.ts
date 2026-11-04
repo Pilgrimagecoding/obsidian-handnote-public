@@ -154,12 +154,12 @@ test('lift hook is trimmed, ordinary endings are not', () => {
   assert.equal(trimLiftHook(base, 2).length, base.length, 'normal stroke untouched');
 });
 
-test('outline: capsules are emitted with consistent winding and valid SVG', () => {
+test('outline: a smooth stroke is a few smooth pieces (0.12: no longer one capsule per step) and valid SVG', () => {
   const raw = samplePath(circle(30, 30, 10), { durationMs: 300 });
   const g = buildStrokeGeometry(raw, 'fountain', fountain, ctx);
   const c = new CountingSink();
   emitGeometry(c, g);
-  assert.ok(c.subpaths > 10);
+  assert.ok(c.subpaths >= 1 && c.subpaths < g.xs.length / 4, `${c.subpaths} pieces for ${g.xs.length} points`);
   const svg = new SvgPathSink();
   emitGeometry(svg, g);
   const d = svg.toString();

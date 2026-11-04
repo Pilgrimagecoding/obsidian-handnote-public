@@ -9,7 +9,7 @@ import { stepSlider } from './slider';
 import { onTap } from './tap';
 import { colorSwatch } from './toolbar';
 import type { InputMode, InputModeSetting } from '../input/input-mode';
-import { StrokeBuilder } from '../ink/stroke-builder';
+import { INK_PIPELINE, StrokeBuilder } from '../ink/stroke-builder';
 import { CanvasPathSink, emitStroke } from '../ink/outline';
 import { pencilFill } from '../rendering/items-paint';
 import { el } from './dom';
@@ -174,7 +174,7 @@ export function drawPenPreview(canvas: HTMLCanvasElement, tool: InkTool, params:
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   const zoom = 2;
   ctx.setTransform(dpr * zoom, 0, 0, dpr * zoom, 0, 0);
-  const b = new StrokeBuilder(tool, params, { zoom, hasPressure: true, engine });
+  const b = new StrokeBuilder(tool, params, { zoom, hasPressure: true, engine, ink: INK_PIPELINE });
   const typ = params.typicalPressure ?? 0.3;
   const heavy = params.heavyPressure ?? 0.6;
   const w = W / zoom;
@@ -538,6 +538,7 @@ export interface MoreMenuModel {
   tapGestures: boolean;
   fingerDoubleTapEraser: boolean;
   usePrediction: boolean;
+  highlighterStraight: boolean;
   diagnostics: boolean;
   hud: boolean;
   texture: boolean;
@@ -549,11 +550,13 @@ export interface MoreMenuModel {
   onClearPage(): void;
   pageEmpty: boolean;
   onTemplate(): void;
+  /** 0.11: whiteboard — no page rows; "fit" shows all content. */
+  board?: boolean;
   onFitWidth: () => void;
   onFitPage: () => void;
   onTexture(v: boolean): void;
   onInputMode(m: InputModeSetting): void;
-  onToggle(key: 'fingerDrawing' | 'tapGestures' | 'fingerDoubleTapEraser' | 'usePrediction' | 'diagnostics' | 'showHud', v: boolean): void;
+  onToggle(key: 'fingerDrawing' | 'tapGestures' | 'fingerDoubleTapEraser' | 'usePrediction' | 'highlighterStraight' | 'diagnostics' | 'showHud', v: boolean): void;
   onCopyDiagnostics: () => void;
   onClearDiagnostics: () => void;
   close(): void;
@@ -567,10 +570,13 @@ export function renderMoreMenu(host: HTMLElement, m: MoreMenuModel): void {
     fn();
     m.close();
   };
-  listRow(card, 'page-add', t('addPage'), run(m.onAddPage), { disabled: m.readOnly });
+  if (!m.board) listRow(card, 'page-add', t('addPage'), run(m.onAddPage), { disabled: m.readOnly });
   listRow(card, 'template', t('changeTemplate'), () => m.onTemplate(), { disabled: m.readOnly, chevron: true });
-  listRow(card, 'fit-width', t('fitWidth'), run(m.onFitWidth));
-  listRow(card, 'fit-page', t('fitPage'), run(m.onFitPage));
+  if (m.board) listRow(card, 'fit-page', t('showAll'), run(m.onFitPage));
+  else {
+    listRow(card, 'fit-width', t('fitWidth'), run(m.onFitWidth));
+    listRow(card, 'fit-page', t('fitPage'), run(m.onFitPage));
+  }
   if (m.actions.length) {
     const ex = el('div', 'hn-list hn-card', host);
     for (const a of m.actions) listRow(ex, 'export', a.label, run(a.run));
@@ -581,7 +587,7 @@ export function renderMoreMenu(host: HTMLElement, m: MoreMenuModel): void {
   const clearRow = listRow(
     del,
     'trash',
-    t('clearPage'),
+    m.board ? t('clearBoard') : t('clearPage'),
     () => {
       if (!armed) {
         clearRow.classList.add('is-armed');
@@ -589,7 +595,7 @@ export function renderMoreMenu(host: HTMLElement, m: MoreMenuModel): void {
         armed = window.setTimeout(() => {
           armed = 0;
           clearRow.classList.remove('is-armed');
-          (clearRow.querySelector('.hn-row-label') as HTMLElement).textContent = t('clearPage');
+          (clearRow.querySelector('.hn-row-label') as HTMLElement).textContent = m.board ? t('clearBoard') : t('clearPage');
         }, 3000);
         return;
       }
@@ -600,7 +606,7 @@ export function renderMoreMenu(host: HTMLElement, m: MoreMenuModel): void {
     { danger: true, disabled: m.pageEmpty || m.readOnly },
   );
   clearRow.classList.add('hn-clear-page');
-  listRow(del, 'page-remove', t('deletePage'), run(m.onDeletePage), { danger: true, disabled: !m.canDeletePage || m.readOnly });
+  if (!m.board) listRow(del, 'page-remove', t('deletePage'), run(m.onDeletePage), { danger: true, disabled: !m.canDeletePage || m.readOnly });
 
   el('div', 'hn-section-title', host, t('settingsSection'));
   const st = el('div', 'hn-list hn-card', host);
@@ -621,6 +627,7 @@ export function renderMoreMenu(host: HTMLElement, m: MoreMenuModel): void {
   toggleRow(st, 'tap', t('tapGestures'), m.tapGestures, (v) => m.onToggle('tapGestures', v));
   toggleRow(st, 'eraser', t('fingerDoubleTap'), m.fingerDoubleTapEraser, (v) => m.onToggle('fingerDoubleTapEraser', v));
   toggleRow(st, 'spark', t('predictedInk'), m.usePrediction, (v) => m.onToggle('usePrediction', v));
+  toggleRow(st, 'highlighter', t('highlighterStraight'), m.highlighterStraight, (v) => m.onToggle('highlighterStraight', v));
   toggleRow(st, 'grain', t('paperGrain'), m.texture, (v) => m.onTexture(v));
   const dg = el('div', 'hn-list hn-card', host);
   toggleRow(dg, 'pulse', t('diagnostics'), m.diagnostics, (v) => m.onToggle('diagnostics', v));
@@ -641,7 +648,11 @@ export interface TemplateChoice {
   scope: 'page' | 'all';
 }
 
-export function renderTemplatePanel(host: HTMLElement, m: { initial: TemplateChoice; onApply(c: TemplateChoice): void; onCancel(): void }): void {
+/**
+ * Change template. `board`: the note is a whiteboard (only paper colour and texture apply);
+ * `offerBoard`: show "Infinite whiteboard" among the page sizes (0.11: converts the note).
+ */
+export function renderTemplatePanel(host: HTMLElement, m: { initial: TemplateChoice; onApply(c: TemplateChoice): void; onCancel(): void; board?: boolean; offerBoard?: boolean }): void {
   host.textContent = '';
   const c: TemplateChoice = { ...m.initial };
   title(host, t('changeTemplate'));
@@ -669,7 +680,17 @@ export function renderTemplatePanel(host: HTMLElement, m: { initial: TemplateCho
     }
   };
   const s1 = section(host, t('pageSize'));
-  chips(s1, PAGE_SIZES.map((p) => [p.id, p.label] as [string, string]), c.sizeId, (v) => (c.sizeId = v));
+  if (m.board) s1.classList.add('is-hidden');
+  const sizes = PAGE_SIZES.map((p) => [p.id, p.label] as [string, string]);
+  if (m.offerBoard) sizes.push(['board', t('boardSize')]);
+  chips(s1, sizes, c.sizeId, (v) => {
+    c.sizeId = v;
+    // a new whiteboard starts with dots (the user can still pick another texture below)
+    if (v === 'board') {
+      c.kind = 'dots';
+      drawThumbs();
+    }
+  });
   chips<'p' | 'l'>(
     s1,
     [
@@ -696,7 +717,7 @@ export function renderTemplatePanel(host: HTMLElement, m: { initial: TemplateCho
       drawThumbs();
     },
   );
-  const s3 = section(host, t('template'));
+  const s3 = section(host, m.board ? t('boardTexture') : t('template'));
   const row = el('div', 'hn-thumbs', s3);
   for (const kind of ['blank', 'ruled', 'grid', 'dots'] as BackgroundKind[]) {
     const b = el('button', 'hn-thumb', row);
@@ -711,6 +732,7 @@ export function renderTemplatePanel(host: HTMLElement, m: { initial: TemplateCho
     thumbs.push({ canvas: cv, kind, btn: b });
   }
   const s4 = section(host, t('applyTo'));
+  if (m.board) s4.classList.add('is-hidden');
   chips<'page' | 'all'>(
     s4,
     [
@@ -774,4 +796,49 @@ function darken(hex: string): string {
 export function renderConfirm(host: HTMLElement, label: string, run: () => void): void {
   host.textContent = '';
   actionButton(host, label, run, 'is-danger');
+}
+
+/**
+ * Go to page (0.10): a number field with the page count; below it, what the typed page is (an
+ * imported document page shows its file and page number in the original). Enter or "Go" jumps.
+ */
+export function renderGoToPagePanel(host: HTMLElement, m: { count: number; current: number; describe(i: number): string | null; onGo(i: number): void }): HTMLInputElement {
+  host.textContent = '';
+  title(host, t('goToPage'));
+  const row = el('div', 'hn-row hn-goto-row', host);
+  const input = el('input', 'hn-goto-input', row);
+  input.type = 'number';
+  input.inputMode = 'numeric';
+  input.min = '1';
+  input.max = String(m.count);
+  input.value = String(m.current + 1);
+  input.setAttribute('aria-label', t('goToPage'));
+  el('span', 'hn-goto-of', row, t('goToPageOf').replace('{n}', String(m.count)));
+  const hint = el('div', 'hn-goto-hint', host);
+  const target = (): number | null => {
+    const n = Math.round(Number(input.value));
+    return Number.isFinite(n) && n >= 1 && n <= m.count ? n - 1 : null;
+  };
+  const go = el('button', 'hn-action is-primary hn-goto-go', host, t('goToPageGo'));
+  go.type = 'button';
+  const refresh = () => {
+    const i = target();
+    hint.textContent = i === null ? '' : (m.describe(i) ?? '');
+    go.disabled = i === null;
+  };
+  input.addEventListener('input', refresh);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const i = target();
+      if (i !== null) m.onGo(i);
+    }
+    e.stopPropagation(); // digits must not switch tools
+  });
+  onTap(go, () => {
+    const i = target();
+    if (i !== null) m.onGo(i);
+  });
+  refresh();
+  return input;
 }

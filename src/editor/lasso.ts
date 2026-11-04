@@ -1,11 +1,13 @@
 import type { GeometryCache } from '../document/geometry-cache';
 import type { Op } from '../document/history';
-import { newId, type Asset, type Page, type Stroke } from '../document/model';
+import { newId, type Asset, type BoardFrame, type Page, type Stroke } from '../document/model';
 import { detachMissing, isLine, itemBounds, itemCenter, itemCorners, connectorPoints, resolveConnectors, transformItem, type Item, type Pt, type ShapeItem, type TextItem } from '../document/items';
 import { quantizeSample } from '../document/codec';
 import { sanitizeParams } from '../ink/presets';
-import { recognizeShape } from '../ink/shape-recognition';
-import { inkPath, type PageRect } from '../rendering/paint';
+import { quantizeGeometry } from '../ink/stroke-builder';
+import { recognizeInk } from '../ink/shape-recognition';
+import { inkPath, paintFrame, type PageRect } from '../rendering/paint';
+import { strokesIn } from '../rendering/board-index';
 import { fitTextBox, layoutText, LINE_HEIGHT, paintItem, pencilFill, TEXT_PAD, textWidth } from '../rendering/items-paint';
 import type { Camera } from './camera';
 import type { EditorSettings, LassoFilter } from './settings';
@@ -25,6 +27,8 @@ export interface LassoHost {
   readOnly(): boolean;
   /** Hide these strokes / items from the scene (they are drawn on the transform layer). */
   setSkip(ids: ReadonlySet<string>): void;
+  /** Whiteboard: hide these frames from the scene while they move (0.11). */
+  setSkipFrames?(ids: ReadonlySet<string>): void;
   requestScene(): void;
   /** Apply an operation and record it for undo. */
   push(op: Op): void;
@@ -48,6 +52,23 @@ export interface LassoSelection {
   pageId: string;
   strokeIds: Set<string>;
   itemIds: Set<string>;
+  /** Whiteboard page frames enclosed by the loop (0.11): they move with the selection. */
+  frameIds?: Set<string>;
+}
+
+/** Whiteboard frames whose four corners are inside the loop. */
+export function framesInLoop(page: Page, poly: Pt[]): Set<string> {
+  const out = new Set<string>();
+  for (const f of page.board?.frames ?? []) {
+    const corners: Pt[] = [
+      [f.x, f.y],
+      [f.x + f.width, f.y],
+      [f.x + f.width, f.y + f.height],
+      [f.x, f.y + f.height],
+    ];
+    if (corners.every((c) => inPolygon(c[0], c[1], poly))) out.add(f.id);
+  }
+  return out;
 }
 
 export interface Clip {
@@ -131,7 +152,22 @@ export function lassoPick(page: Page, poly: Pt[], filter: LassoFilter, cache: Ge
     for (const p of pts) if (inPolygon(p[0], p[1], poly)) n++;
     return n / pts.length;
   };
-  for (const s of page.strokes) {
+  // whiteboard: only strokes near the loop (its ink outlines are built only for those)
+  let cands: readonly Stroke[] = page.strokes;
+  if (page.board) {
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    for (const p of poly) {
+      x0 = Math.min(x0, p[0]);
+      y0 = Math.min(y0, p[1]);
+      x1 = Math.max(x1, p[0]);
+      y1 = Math.max(y1, p[1]);
+    }
+    cands = strokesIn(page, [x0, y0, x1, y1]);
+  }
+  for (const s of cands) {
     if (s.tool === 'highlighter' ? !filter.highlighter : !filter.ink) continue;
     const g = cache.get(s);
     const step = Math.max(1, Math.floor(g.xs.length / 40));
@@ -227,7 +263,21 @@ export function transformStroke(s: Stroke, pivot: Pt, k: number, ang: number, tx
   });
   const params = { ...s.params, width: s.params.width * k };
   if (params.nibFlatness > 0 && ang) params.nibAngle = (((params.nibAngle + (ang * 180) / Math.PI) % 180) + 180) % 180;
-  return { ...s, samples, params: k === 1 ? s.params : sanitizeParams(s.tool, params), zoom: Math.round((s.zoom / k) * 1000) / 1000 || s.zoom };
+  const out: Stroke = { ...s, samples, params: k === 1 ? s.params : sanitizeParams(s.tool, params), zoom: Math.round((s.zoom / k) * 1000) / 1000 || s.zoom };
+  // the drawn ink moves as a rigid shape (0.12): the same map on its centerline, radii scaled by k
+  if (s.geom) {
+    const g = s.geom;
+    const xs: number[] = [];
+    const ys: number[] = [];
+    for (let i = 0; i < g.xs.length; i++) {
+      const dx = (g.xs[i] - pivot[0]) * k;
+      const dy = (g.ys[i] - pivot[1]) * k;
+      xs.push(pivot[0] + dx * cs - dy * sn + tx);
+      ys.push(pivot[1] + dx * sn + dy * cs + ty);
+    }
+    out.geom = quantizeGeometry({ xs, ys, rs: g.rs.map((r) => r * k) });
+  }
+  return out;
 }
 
 function unionBox(boxes: Box[]): Box | null {
@@ -435,8 +485,9 @@ export class LassoController {
       }
       if (items !== page.items) pending = { pageId: page.id, base: page.items, items };
     }
-    if (!pick.strokeIds.size && !pick.itemIds.size) return;
-    this.setSelection({ pageId: page.id, ...pick }, poly, pending);
+    const frameIds = page.board ? framesInLoop(page, poly) : new Set<string>();
+    if (!pick.strokeIds.size && !pick.itemIds.size && !frameIds.size) return;
+    this.setSelection({ pageId: page.id, ...pick, ...(frameIds.size ? { frameIds } : {}) }, poly, pending);
   }
 
   private polygon(path: Pt[]): Pt[] {
@@ -489,7 +540,7 @@ export class LassoController {
    * selection's outline; `pending`: a previewed text split the selection refers to.
    */
   setSelection(sel: LassoSelection | null, outline: Pt[] | null = null, pending: { pageId: string; base: Item[]; items: Item[] } | null = null): void {
-    this.sel = sel && (sel.strokeIds.size || sel.itemIds.size) ? sel : null;
+    this.sel = sel && (sel.strokeIds.size || sel.itemIds.size || sel.frameIds?.size) ? sel : null;
     this.outline = this.sel ? outline : null;
     this.pending = this.sel ? pending : null;
     this.sync();
@@ -518,23 +569,24 @@ export class LassoController {
     this.setSelection(null);
   }
 
-  /** Selected strokes and items (current objects of the page). */
-  selected(): { rect: PageRect; strokes: Stroke[]; items: Item[] } | null {
+  /** Selected strokes, items and whiteboard frames (current objects of the page). */
+  selected(): { rect: PageRect; strokes: Stroke[]; items: Item[]; frames: BoardFrame[] } | null {
     const s = this.sel;
     if (!s) return null;
     const rect = this.rectOf(s.pageId);
     if (!rect) return null;
     const strokes = rect.page.strokes.filter((x) => s.strokeIds.has(x.id));
     const items = this.itemsOf(rect.page).filter((x) => s.itemIds.has(x.id));
-    if (!strokes.length && !items.length) return null;
-    return { rect, strokes, items };
+    const frames = s.frameIds?.size ? (rect.page.board?.frames ?? []).filter((f) => s.frameIds?.has(f.id)) : [];
+    if (!strokes.length && !items.length && !frames.length) return null;
+    return { rect, strokes, items, frames };
   }
 
   /** Bounds of the selection (page-local). */
   bounds(): Box | null {
     const f = this.selected();
     if (!f) return null;
-    const boxes: Box[] = [];
+    const boxes: Box[] = f.frames.map((fr) => ({ x: fr.x, y: fr.y, w: fr.width, h: fr.height }));
     for (const s of f.strokes) {
       const g = this.h.cache.get(s);
       boxes.push({ x: g.bbox[0], y: g.bbox[1], w: g.bbox[2] - g.bbox[0], h: g.bbox[3] - g.bbox[1] });
@@ -590,6 +642,8 @@ export class LassoController {
     bx.style.height = `${y1 - y0}px`;
     bx.classList.toggle('is-readonly', this.h.readOnly());
     bx.classList.toggle('has-loop', !!loop);
+    // page frames only move: no scale / rotate handles while one is selected
+    bx.classList.toggle('is-move-only', f.frames.length > 0);
     this.outlinePath.setAttribute('d', loop ? smoothPathD(loop.map((p) => [p[0] - x0, p[1] - y0] as Pt), true) : '');
     const fr = this.frame.style;
     const fp = 2;
@@ -644,7 +698,7 @@ export class LassoController {
   // ---------------------------------------------------------------------------------------------
 
   /** Replace strokes / items of the selection's page in one undo step. */
-  private apply(page: Page, strokes: Stroke[] | null, items: Item[] | null, itemsBefore?: Item[]): void {
+  private apply(page: Page, strokes: Stroke[] | null, items: Item[] | null, itemsBefore?: Item[], frames?: BoardFrame[] | null): void {
     const p = this.pending;
     const split = !!p && p.pageId === page.id && page.items === p.base;
     // a previewed text split becomes real together with the action (one undo step)
@@ -653,6 +707,7 @@ export class LassoController {
     const ops: Op[] = [];
     if (strokes) ops.push({ kind: 'set-strokes', pageId: page.id, before: page.strokes, after: strokes });
     if (items) ops.push({ kind: 'set-items', pageId: page.id, before: itemsBefore ?? page.items, after: items });
+    if (frames && page.board) ops.push({ kind: 'set-frames', pageId: page.id, before: page.board.frames, after: frames });
     if (!ops.length) return;
     this.h.push(ops.length === 1 ? ops[0] : { kind: 'batch', ops });
   }
@@ -681,8 +736,9 @@ export class LassoController {
     const page = f.rect.page;
     const strokes = f.strokes.length ? page.strokes.filter((x) => !s.strokeIds.has(x.id)) : null;
     const items = f.items.length ? detachMissing(this.itemsOf(page).filter((x) => !s.itemIds.has(x.id))) : null;
+    const frames = f.frames.length && page.board ? page.board.frames.filter((x) => !s.frameIds?.has(x.id)) : null;
     this.setSelection(null);
-    this.apply(page, strokes, items);
+    this.apply(page, strokes, items, undefined, frames);
   }
 
   /** Paste the clipboard centred at a page point (or offset from the original position). */
@@ -806,7 +862,7 @@ export class LassoController {
     const replaced = new Set<string>();
     for (const st of f.strokes) {
       if (st.tool === 'highlighter') continue;
-      const rec = recognizeShape(st.samples);
+      const rec = recognizeInk(st.samples, st.geom, st.zoom);
       if (!rec) continue;
       const item: ShapeItem = {
         id: newId('i'),
@@ -823,10 +879,12 @@ export class LassoController {
         fillOpacity: 1,
       };
       if (rec.points) item.points = rec.points;
+      if (rec.rot) item.rot = rec.rot;
       if (rec.a && rec.b) {
         item.a = rec.a;
         item.b = rec.b;
         if (rec.c) item.c = rec.c;
+      if (rec.c2) item.c2 = rec.c2;
         if (rec.pts) item.pts = rec.pts;
         item.arrowEnd = !!rec.arrowEnd;
         if (rec.arrowEnd) item.head = 'open';
@@ -865,7 +923,8 @@ export class LassoController {
       e.preventDefault();
       e.stopPropagation();
       this.hidePaste();
-      const handle = ((e.target as HTMLElement).dataset?.h as Handle | undefined) ?? 'move';
+      // page frames only move (no scale / rotate)
+      const handle = f.frames.length ? 'move' : (((e.target as HTMLElement).dataset?.h as Handle | undefined) ?? 'move');
       try {
         this.box.setPointerCapture(e.pointerId);
       } catch {
@@ -887,6 +946,7 @@ export class LassoController {
       this.box.classList.add('is-dragging');
       const ids = new Set<string>([...(this.sel?.strokeIds ?? []), ...(this.sel?.itemIds ?? [])]);
       this.h.setSkip(ids);
+      if (f.frames.length) this.h.setSkipFrames?.(new Set(f.frames.map((x) => x.id)));
       this.h.requestScene();
     });
     this.box.addEventListener('pointermove', (e) => {
@@ -923,6 +983,7 @@ export class LassoController {
       this.box.classList.remove('is-dragging');
       this.box.style.removeProperty('transform');
       this.h.setSkip(new Set());
+      this.h.setSkipFrames?.(new Set());
       if (d.moved && e.type === 'pointerup') this.bake(d);
       else {
         // nothing done: the page goes back to how it was (the split stays a preview)
@@ -949,7 +1010,7 @@ export class LassoController {
   }
 
   /** Draw the selection alone onto a canvas covering its screen bounds. */
-  private renderFloat(f: { rect: PageRect; strokes: Stroke[]; items: Item[] }, b: Box): { float: HTMLCanvasElement; origin: Pt } {
+  private renderFloat(f: { rect: PageRect; strokes: Stroke[]; items: Item[]; frames?: BoardFrame[] }, b: Box): { float: HTMLCanvasElement; origin: Pt } {
     const z = this.h.camera().zoom;
     const dpr = this.h.dpr();
     const m = 24;
@@ -978,6 +1039,7 @@ export class LassoController {
       const c = this.h.camera();
       const k = k0 * z;
       ctx.setTransform(k, 0, 0, k, k0 * ((f.rect.x - c.x) * z - x0), k0 * ((f.rect.y - c.y) * z - y0));
+      for (const fr of f.frames ?? []) paintFrame(ctx, fr, k, 'rgba(0,0,0,0.12)');
       for (const it of f.items) if (it.type !== 'text' && it.type !== 'formula') paintItem(ctx, it);
       for (const s of f.strokes) {
         ctx.globalAlpha = s.params.opacity;
@@ -1018,8 +1080,10 @@ export class LassoController {
       });
       items = resolveConnectors(items);
     }
+    // whiteboard frames: moved only (the handles for scale / rotate are hidden while one is selected)
+    const frames = s.frameIds?.size && page.board ? page.board.frames.map((x) => (s.frameIds?.has(x.id) ? { ...x, x: x.x + d.tx, y: x.y + d.ty } : x)) : null;
     if (this.outline) this.outline = this.outline.map((p) => mapPt(p, d.pivot, d.k, d.ang, d.tx, d.ty));
-    this.apply(page, strokes, items, d.realBefore ?? undefined);
+    this.apply(page, strokes, items, d.realBefore ?? undefined, frames);
   }
 
   destroy(): void {

@@ -24,6 +24,21 @@ export interface RenderedPage {
 export interface DocPageRenderer {
   /** Rasterize page `n` (1-based) of `src` to about w × h device pixels. Reject with DocError. */
   render(src: DocSource, n: number, w: number, h: number, signal: AbortSignal): Promise<RenderedPage>;
+  /** The document's own contents (PDF bookmarks), when the format has one (0.10). */
+  outline?(src: DocSource): Promise<OutlineItem[]>;
+}
+
+/** One entry of a document's contents: title, 1-based page of the source (null: no target). */
+export interface OutlineItem {
+  title: string;
+  page: number | null;
+  items: OutlineItem[];
+}
+
+/** Contents of an imported document ([] when it has none). Rejects with DocError (missing…). */
+export async function docOutline(src: DocSource): Promise<OutlineItem[]> {
+  if (!renderer?.outline) return [];
+  return renderer.outline(src);
 }
 
 /** A failure the page should show instead of the document (missing file, damaged file…). */

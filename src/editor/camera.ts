@@ -6,10 +6,15 @@ export interface Camera {
 }
 
 export const MIN_ZOOM = 0.25;
-export const MAX_ZOOM = 8;
+/** 0.12: up to 2400 % (GoodNotes-like close-ups); ink is vector and re-rendered at the zoom. */
+export const MAX_ZOOM = 24;
+/** Whiteboards zoom out further to see everything at once (0.11). */
+export const BOARD_MIN_ZOOM = 0.1;
+/** Whiteboard coordinates stay within ±BOARD_LIMIT units (same limit as the file format). */
+export const BOARD_CAMERA_LIMIT = 1e6;
 
-export function clampZoom(z: number): number {
-  return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z));
+export function clampZoom(z: number, min = MIN_ZOOM): number {
+  return Math.min(MAX_ZOOM, Math.max(min, z));
 }
 
 export function screenToWorld(cam: Camera, sx: number, sy: number): { x: number; y: number } {
@@ -21,8 +26,8 @@ export function worldToScreen(cam: Camera, wx: number, wy: number): { x: number;
 }
 
 /** Zoom to `zoom` keeping the world point under screen point (sx, sy) fixed. */
-export function zoomAt(cam: Camera, zoom: number, sx: number, sy: number): Camera {
-  const z = clampZoom(zoom);
+export function zoomAt(cam: Camera, zoom: number, sx: number, sy: number, min = MIN_ZOOM): Camera {
+  const z = clampZoom(zoom, min);
   const w = screenToWorld(cam, sx, sy);
   return { x: w.x - sx / z, y: w.y - sy / z, zoom: z };
 }
@@ -36,7 +41,7 @@ export function constrainCamera(
   view: { w: number; h: number },
   doc: { minX: number; maxX: number; height: number },
 ): Camera {
-  const z = cam.zoom;
+  const z = clampZoom(cam.zoom);
   const docW = (doc.maxX - doc.minX) * z;
   let x = cam.x;
   if (docW <= view.w) {
@@ -57,4 +62,11 @@ export function constrainCamera(
 export function previewTransform(from: Camera, to: Camera): { k: number; tx: number; ty: number } {
   const k = to.zoom / from.zoom;
   return { k, tx: (from.x - to.x) * to.zoom, ty: (from.y - to.y) * to.zoom };
+}
+
+/** A whiteboard has no edges: only the zoom range and the coordinate limit apply. */
+export function constrainBoardCamera(cam: Camera): Camera {
+  const z = clampZoom(cam.zoom, BOARD_MIN_ZOOM);
+  const L = BOARD_CAMERA_LIMIT;
+  return { x: Math.min(L, Math.max(-L, cam.x)), y: Math.min(L, Math.max(-L, cam.y)), zoom: z };
 }

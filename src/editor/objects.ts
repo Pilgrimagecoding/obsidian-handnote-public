@@ -3,7 +3,9 @@ import { newId } from '../document/model';
 import {
   anchorPoint,
   controlFromMid,
+  chordMap,
   curveMid,
+  curveMidOf,
   defaultPoints,
   detachMissing,
   fitConnector,
@@ -573,8 +575,9 @@ export class ObjectController {
     const item: TextItem = fitTextBox({
       id: newId('i'),
       type: 'text',
-      x: Math.max(0, x - TEXT_PAD),
-      y: Math.max(0, y - s.size * 0.75 - TEXT_PAD),
+      // a whiteboard has no page edge to keep the box inside
+      x: r.page.board ? x - TEXT_PAD : Math.max(0, x - TEXT_PAD),
+      y: r.page.board ? y - s.size * 0.75 - TEXT_PAD : Math.max(0, y - s.size * 0.75 - TEXT_PAD),
       w: s.size * 2,
       h: s.size * LINE_HEIGHT + TEXT_PAD * 2,
       created: Date.now(),
@@ -1046,6 +1049,13 @@ export class ObjectController {
       const a: Pt = hd === 'a' ? [p.x, p.y] : orig.a;
       const b: Pt = hd === 'b' ? [p.x, p.y] : orig.b;
       let c = orig.c;
+      if (c && orig.c2) {
+        // a cubic keeps its whole shape relative to the chord
+        const n2: ShapeItem = fitConnector({ ...orig, a, b, c: chordMap(orig.a, orig.b, a, b, c), c2: chordMap(orig.a, orig.b, a, b, orig.c2) });
+        if (hd === 'a') delete n2.from;
+        else delete n2.to;
+        return n2;
+      }
       if (c) {
         // keep the bulge relative to the chord
         const m = curveMid(orig.a, c, orig.b);
@@ -1057,7 +1067,12 @@ export class ObjectController {
       else delete n.to;
       return n;
     }
-    if (isLine(orig) && hd === 'c' && orig.c) return fitConnector({ ...orig, c: controlFromMid(orig.a, [p.x, p.y], orig.b) });
+    if (isLine(orig) && hd === 'c' && orig.c) {
+      // dragging the middle of a cubic (U / S shape) makes it a simple arc through that point
+      const n: ShapeItem = { ...orig, c: controlFromMid(orig.a, [p.x, p.y], orig.b) };
+      delete n.c2;
+      return fitConnector(n);
+    }
     if (isLine(orig) && hd.startsWith('p') && orig.pts) {
       const i = Number(hd.slice(1));
       const pts = orig.pts.slice();
@@ -1167,7 +1182,7 @@ export class ObjectController {
       if (line) {
         if (hd === 'a') pt = item.a;
         else if (hd === 'b') pt = item.b;
-        else if (hd === 'c' && item.kind === 'curve' && item.c) pt = curveMid(item.a, item.c, item.b);
+        else if (hd === 'c' && item.kind === 'curve' && item.c) pt = curveMidOf({ a: item.a, b: item.b, c: item.c, c2: item.c2 });
         else if (hd.startsWith('p') && item.pts) {
           const i = Number(hd.slice(1));
           if (i < vertexCount) pt = [item.pts[i * 2], item.pts[i * 2 + 1]];

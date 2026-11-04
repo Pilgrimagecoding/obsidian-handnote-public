@@ -139,3 +139,59 @@ test('handwriting-like strokes stay ink (no false shapes)', () => {
   );
   assert.ok(p >= 90, `false positives ${100 - p}%`);
 });
+
+// ---- 0.12: size-adaptive tolerances, live preview recognition ----
+import { shapeTolerance } from '../../src/ink/shape-recognition';
+import { bandStroke, expected, type Band, type Kind } from './shape-bands';
+
+function bandRate(kind: Kind, band: Band, n = 60): number {
+  let ok = 0;
+  for (let i = 0; i < n; i++) if (expected(kind, recognizeShape(bandStroke(kind, band, i)), i)) ok++;
+  const pct = (100 * ok) / n;
+  console.log(`  shape band ${band} ${kind}: ${pct.toFixed(0)}%`);
+  return pct;
+}
+
+test('tolerances scale with the size: looser (relative) for big shapes, tighter (absolute) for small ones', () => {
+  const s = shapeTolerance(20);
+  const m = shapeTolerance(200);
+  const l = shapeTolerance(1500);
+  assert.ok(s.k < m.k && m.k < l.k, 'relative multiplier grows with the size');
+  assert.equal(shapeTolerance(10).k, shapeTolerance(40).k, 'flat below 40 units');
+  assert.equal(shapeTolerance(800).k, shapeTolerance(5000).k, 'flat above 800 units');
+  // absolute corner tolerance: small strokes get a few units (pen noise), large ones a share of their size
+  assert.ok(s.cornerEps < m.cornerEps && m.cornerEps < l.cornerEps);
+  assert.ok(s.cornerEps / 20 > l.cornerEps / 1500, 'relative to the size, pen noise dominates small shapes');
+  for (const t of [s, m, l]) {
+    assert.ok(t.ellipseErr < t.ellipseErrRound);
+    assert.ok(t.lineLen > 1 && t.lineDev > 0 && t.curveErr > 0 && t.polyEps > 0);
+  }
+});
+
+test('small shapes (16–45 units) are recognised much more often than with fixed thresholds', () => {
+  // fixed thresholds (0.11): rect 45 %, triangle 34 %, curve 80 %, ellipse 88 %, line 91 %
+  assert.ok(bandRate('rect', 'small') >= 75);
+  assert.ok(bandRate('triangle', 'small') >= 75);
+  assert.ok(bandRate('curve', 'small') >= 85);
+  assert.ok(bandRate('ellipse', 'small') >= 85);
+  assert.ok(bandRate('line', 'small') >= 90);
+  assert.ok(bandRate('scribble', 'small') >= 85, 'small writing strokes stay ink');
+});
+
+test('medium and large shapes stay recognised (no regression from the adaptive thresholds)', () => {
+  for (const band of ['medium', 'large'] as Band[]) {
+    for (const k of ['line', 'curve', 'rect', 'triangle', 'arrow'] as Kind[]) assert.ok(bandRate(k, band) >= 93, `${band} ${k}`);
+    // rotated ellipses are not fitted (axis-aligned fit only), hence a lower floor
+    assert.ok(bandRate('ellipse', band) >= 85, `${band} ellipse`);
+    assert.ok(bandRate('scribble', band) >= 97, `${band} scribble`);
+  }
+});
+
+test('a near-circle snaps to a circle; a clear ellipse keeps its proportions', () => {
+  const circ = recognizeShape(handStroke(ellipsePath(300, 300, 80, 76, 0, 0.5, 1.02, 0.02, 1), { seed: 3, wobble: 0.004 }));
+  assert.equal(circ?.kind, 'ellipse');
+  assert.ok(Math.abs(circ!.w - circ!.h) < 0.01, `circle ${circ!.w} × ${circ!.h}`);
+  const ell = recognizeShape(handStroke(ellipsePath(300, 300, 120, 60, 0, 0.5, 1.02, 0.02, 2), { seed: 4, wobble: 0.004 }));
+  assert.equal(ell?.kind, 'ellipse');
+  assert.ok(ell!.w > ell!.h * 1.6, 'ellipse not snapped');
+});

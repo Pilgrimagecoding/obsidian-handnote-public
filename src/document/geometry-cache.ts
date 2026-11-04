@@ -1,4 +1,4 @@
-import { buildStrokeGeometry, type StrokeGeometry } from '../ink/stroke-builder';
+import { buildStrokeGeometry, geometryFromStored, type StrokeGeometry } from '../ink/stroke-builder';
 import type { Stroke } from './model';
 
 /**
@@ -11,6 +11,10 @@ export class GeometryCache {
 
   get(stroke: Stroke): StrokeGeometry {
     let g = this.map.get(stroke);
+    if (!g && stroke.geom && stroke.geom.xs.length) {
+      g = geometryFromStored(stroke.geom);
+      this.map.set(stroke, g);
+    }
     if (!g) {
       g = buildStrokeGeometry(stroke.samples, stroke.tool, stroke.params, {
         zoom: stroke.zoom,

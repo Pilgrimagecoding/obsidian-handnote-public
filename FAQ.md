@@ -73,7 +73,7 @@ tools are optional and use **your own** keys with the provider's own pricing.
 ### How large is the model download? Can I delete it?
 
 15.8 MB (Chinese) or 7.5 MB (English); the runtime is built into the plugin. The
-optional hand font is 12.1 MB and is loaded per character. Settings → HandNote → Local recognition
+optional hand font is 12.1 MB and is loaded per character. Settings → HandNote → Recognition and AI → Local recognition
 shows the size before downloading and has a Delete button for every pack. Models are stored per
 device in the app's storage, not in your vault. They stay there when you uninstall or reinstall
 HandNote (a reinstall uses them again without a download); delete them first if you want the space
@@ -123,7 +123,7 @@ recolour or delete them. Grouped pieces are edited as one text with the text too
 
 PDF, Word (.docx, .doc), PowerPoint (.pptx) and Excel (.xlsx): **Import document…** or right-click
 a file → **Annotate in HandNote**. A file picked from the device is copied once into the folder
-`HandNote imports` (Settings → HandNote → Imported documents; empty = Obsidian's attachment
+`HandNote imports` (Settings → HandNote → Images, documents and embeds; empty = Obsidian's attachment
 location); a file that is already in the vault is used where it is. The original is never modified,
 and importing the same file again does not copy it twice. Deleting a note does not delete the
 original.
@@ -150,7 +150,7 @@ confirmation. See [PRIVACY.md](PRIVACY.md).
 ### Does HandNote sync with Obsidian Sync?
 
 Your notes (`.handnote` files) sync like any other file. The plugin itself: `main.js` is about
-6.2 MB because the recognition runtime is built in, and Obsidian Sync's Standard plan does not sync
+6.3 MB because the recognition runtime is built in, and Obsidian Sync's Standard plan does not sync
 files over 5 MB. With that plan, install HandNote on each device from Community plugins.
 
 ### Does it work on iPhone or Android?

@@ -3,9 +3,10 @@ import type { StrokeGeometry } from './stroke-builder';
 /**
  * Converts centerline+radius samples into a fillable outline.
  *
- * The outline is the union of "tapered capsules" (convex hull of two circles) between consecutive
- * samples, emitted as separate sub-paths that all wind the same way and filled with the nonzero
- * rule. Compared with stroking each segment with a different lineWidth, this gives:
+ * 0.12: the outline is the centerline offset by the radius on both sides with round caps (see
+ * emitStroke); sharp turns fall back to "tapered capsules" (convex hull of two circles). All
+ * pieces wind the same way and are filled with the nonzero rule. Compared with stroking each
+ * segment with a different lineWidth, this gives:
  *  - one fill per stroke, so translucent strokes have no darker beads where segments overlap;
  *  - exact, artifact-free corners at any turn angle (no miter spikes, no self-intersections);
  *  - smooth width transitions (each capsule interpolates the radius linearly);
@@ -56,9 +57,26 @@ export function emitCapsule(
   sink.closePath();
 }
 
+/** Longest merged step (page units): at 2400 % that is under a pixel. */
+const MAX_MERGE = 0.035;
+/** Turn between two outline points (radians) above which the joint is drawn as capsules. */
+const MAX_SMOOTH_TURN = (30 * Math.PI) / 180;
+
 /**
- * Emit the whole stroke. Capsules shorter than `minStep` are merged forward to keep the path small;
- * the merged capsule still covers the skipped samples because radius changes are smoothed.
+ * Emit the whole stroke (0.12): one smooth outline — the centerline offset along its normal by
+ * the radius on each side, round caps at both ends — instead of a union of capsules. A capsule
+ * between every pair of points made the edge a chain of straight pieces that bent at every point
+ * where the radius changed slope: fine, irregular waves along the edge. The offset also leans
+ * with the radius change (the envelope of the pen's circles), so a widening stroke is outlined
+ * exactly as before.
+ *
+ * Where the outline cannot follow the centerline smoothly — a sharp turn, a bend tighter than
+ * the pen's radius (the inner side would loop) or a radius change steeper than the step — those
+ * steps are drawn as capsules, which handle any turn. Every piece winds the same way and the
+ * stroke is filled once with the nonzero rule, so overlaps never darken translucent ink.
+ *
+ * `from` draws only the part from that point on (the live layer appends as the stroke grows);
+ * the points before it still give the direction at the joint.
  */
 export function emitStroke(
   sink: PathSink,
@@ -74,19 +92,107 @@ export function emitStroke(
     emitCircle(sink, xs[from] ?? xs[0], ys[from] ?? ys[0], rs[from] ?? rs[0]);
     return;
   }
-  let i0 = Math.max(0, from);
+  const i0 = Math.max(0, from);
   if (i0 >= n - 1) {
     emitCircle(sink, xs[n - 1], ys[n - 1], rs[n - 1]);
     return;
   }
+  // points used for the outline: steps shorter than minStep are skipped (the path stays small)
+  const idx: number[] = [i0];
   for (let i = i0 + 1; i < n; i++) {
-    const dx = xs[i] - xs[i0];
-    const dy = ys[i] - ys[i0];
-    const minStep = Math.min(rs[i0], rs[i]) * 0.35;
-    if (i < n - 1 && dx * dx + dy * dy < minStep * minStep) continue;
-    emitCapsule(sink, xs[i0], ys[i0], rs[i0], xs[i], ys[i], rs[i]);
-    i0 = i;
+    const j = idx[idx.length - 1];
+    const minStep = Math.min(Math.min(rs[j], rs[i]) * 0.35, MAX_MERGE);
+    if (i < n - 1 && (xs[i] - xs[j]) ** 2 + (ys[i] - ys[j]) ** 2 < minStep * minStep) continue;
+    idx.push(i);
   }
+  const m = idx.length;
+  // direction (tangent angle) and lean (angle between the tangent and the offset) at each point
+  const th = new Float64Array(m);
+  const al = new Float64Array(m);
+  for (let k = 0; k < m; k++) {
+    const i = idx[k];
+    const a = k > 0 ? idx[k - 1] : i0 > 0 ? i0 - 1 : i;
+    const b = k < m - 1 ? idx[k + 1] : i;
+    let dx = xs[b] - xs[a];
+    let dy = ys[b] - ys[a];
+    let d = Math.hypot(dx, dy);
+    if (d < 1e-9) {
+      // coincident neighbours: the nearest step that has a direction
+      const c = k < m - 1 ? idx[k + 1] : idx[Math.max(0, k - 1)];
+      dx = k < m - 1 ? xs[c] - xs[i] : xs[i] - xs[c];
+      dy = k < m - 1 ? ys[c] - ys[i] : ys[i] - ys[c];
+      d = Math.hypot(dx, dy);
+    }
+    th[k] = Math.atan2(dy, dx);
+    const drds = d > 1e-9 ? (rs[b] - rs[a]) / d : 0;
+    al[k] = Math.acos(Math.max(-0.95, Math.min(0.95, -drds)));
+  }
+  // a step can be outlined smoothly when it turns little, does not bend tighter than the radius
+  // and the inner side moves forward
+  const smooth = (k: number): boolean => {
+    const i = idx[k];
+    const j = idx[k + 1];
+    const d = Math.hypot(xs[j] - xs[i], ys[j] - ys[i]);
+    if (d <= Math.abs(rs[j] - rs[i]) * 1.05 + 1e-9) return false;
+    let turn = Math.abs(th[k + 1] - th[k]);
+    if (turn > Math.PI) turn = 2 * Math.PI - turn;
+    if (turn > MAX_SMOOTH_TURN) return false;
+    if (turn > 1e-6 && d / turn < Math.max(rs[i], rs[j]) * 1.15) return false;
+    // mean direction of the step
+    const ux = Math.cos(th[k]) + Math.cos(th[k + 1]);
+    const uy = Math.sin(th[k]) + Math.sin(th[k + 1]);
+    for (const sgn of [1, -1]) {
+      const ex0 = xs[i] + rs[i] * Math.cos(th[k] + sgn * al[k]);
+      const ey0 = ys[i] + rs[i] * Math.sin(th[k] + sgn * al[k]);
+      const ex1 = xs[j] + rs[j] * Math.cos(th[k + 1] + sgn * al[k + 1]);
+      const ey1 = ys[j] + rs[j] * Math.sin(th[k + 1] + sgn * al[k + 1]);
+      if ((ex1 - ex0) * ux + (ey1 - ey0) * uy <= 0) return false;
+    }
+    return true;
+  };
+  let k = 0;
+  while (k < m - 1) {
+    if (!smooth(k)) {
+      const i = idx[k];
+      const j = idx[k + 1];
+      emitCapsule(sink, xs[i], ys[i], rs[i], xs[j], ys[j], rs[j]);
+      k++;
+      continue;
+    }
+    let e = k + 1;
+    while (e < m - 1 && smooth(e)) e++;
+    emitOffsetPiece(sink, xs, ys, rs, idx, th, al, k, e);
+    k = e;
+  }
+}
+
+/** One smooth piece from outline point a to b: back cap, one side, front cap, the other side. */
+function emitOffsetPiece(
+  sink: PathSink,
+  xs: ArrayLike<number>,
+  ys: ArrayLike<number>,
+  rs: ArrayLike<number>,
+  idx: number[],
+  th: Float64Array,
+  al: Float64Array,
+  a: number,
+  b: number,
+): void {
+  const ia = idx[a];
+  const ib = idx[b];
+  // same winding as emitCapsule: start on the +lean side, round the back, along the −lean side
+  sink.moveTo(xs[ia] + rs[ia] * Math.cos(th[a] + al[a]), ys[ia] + rs[ia] * Math.sin(th[a] + al[a]));
+  sink.arc(xs[ia], ys[ia], rs[ia], th[a] + al[a], th[a] + TWO_PI - al[a]);
+  for (let k = a + 1; k <= b; k++) {
+    const i = idx[k];
+    sink.lineTo(xs[i] + rs[i] * Math.cos(th[k] - al[k]), ys[i] + rs[i] * Math.sin(th[k] - al[k]));
+  }
+  sink.arc(xs[ib], ys[ib], rs[ib], th[b] - al[b], th[b] + al[b]);
+  for (let k = b - 1; k >= a; k--) {
+    const i = idx[k];
+    sink.lineTo(xs[i] + rs[i] * Math.cos(th[k] + al[k]), ys[i] + rs[i] * Math.sin(th[k] + al[k]));
+  }
+  sink.closePath();
 }
 
 export function emitGeometry(sink: PathSink, g: StrokeGeometry): void {

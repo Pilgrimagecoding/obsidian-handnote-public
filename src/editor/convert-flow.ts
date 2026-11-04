@@ -356,7 +356,6 @@ export class ConvertFlow {
     const canReplace = sel.strokes.length > 0 && !this.h.readOnly();
     const color = inkColor(sel.strokes, this.h.defaultInkColor());
     const replaceIds = new Set(sel.strokes.map((s) => s.id));
-    const pageBox = { width: page.width, height: page.height };
     const srcCanvas = cloneCanvas(source);
     const r = run.result;
     if (r.task === 'text' || r.task === 'image-text') {
@@ -423,11 +422,15 @@ export class ConvertFlow {
           canReplace,
           info,
           onApply: (root, th, lay, mode) => {
-            let it = buildMindMapItem(root, sel.bounds, th, lay, 0, 0, pageBox);
+            // placement works in a page-sized space (a whiteboard: one around the selection)
+            const sp = placementSpace(page, sel.bounds);
+            const lb = shiftBox(sel.bounds, sp);
+            let it = buildMindMapItem(root, lb, th, lay, 0, 0, sp.box);
             if (mode === 'keep') {
-              const off = freeSpotOffset(sel.bounds, it, pageBox, occupiedBoxes(page));
-              it = clampToPage(moveItem(it, off.dx, off.dy) as MindMapItem, pageBox);
+              const off = freeSpotOffset(lb, it, sp.box, occupiedBoxes(page).map((b) => shiftBox(b, sp)));
+              it = clampToPage(moveItem(it, off.dx, off.dy) as MindMapItem, sp.box);
             }
+            if (sp.ox || sp.oy) it = moveItem(it, sp.ox, sp.oy, true) as MindMapItem;
             resolve(this.apply(page, [it], mode, replaceIds));
           },
         });
@@ -767,9 +770,24 @@ function occupiedBoxes(page: Page): Box[] {
   return out;
 }
 
+/**
+ * Where converted results may go: the page, or on a whiteboard (no edges, negative coordinates) a
+ * page-sized space around the selection. Boxes are shifted by (−ox, −oy) into that space.
+ */
+function placementSpace(page: Page, src: Box): { ox: number; oy: number; box: { width: number; height: number } } {
+  if (!page.board) return { ox: 0, oy: 0, box: { width: page.width, height: page.height } };
+  const m = 2000;
+  return { ox: src.x - m, oy: src.y - m, box: { width: src.w + 2 * m, height: src.h + 2 * m } };
+}
+
+function shiftBox<B extends Box>(b: B, sp: { ox: number; oy: number }): B {
+  return { ...b, x: b.x - sp.ox, y: b.y - sp.oy };
+}
+
 function offsetBeside(items: Item[], src: Box, page: Page): Item[] {
   const b = boundsOf(items);
-  const off = freeSpotOffset(src, b, page, occupiedBoxes(page));
+  const sp = placementSpace(page, src);
+  const off = freeSpotOffset(shiftBox(src, sp), shiftBox(b, sp), sp.box, occupiedBoxes(page).map((o) => shiftBox(o, sp)));
   // keep connectors attached: move everything together (attachments are kept)
   return items.map((it) => moveItem(it, off.dx, off.dy, true));
 }

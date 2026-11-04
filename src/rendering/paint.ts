@@ -1,5 +1,7 @@
 import { paintDocPage } from './doc-layer';
-import type { HandNoteDocument, Page, PageBackground, Stroke } from '../document/model';
+import type { BoardFrame, HandNoteDocument, Page, PageBackground, Stroke } from '../document/model';
+import { BOARD_MARGIN, boardExtent, type Bounds } from '../document/board';
+import { paintStrokesSimplified, roughBounds, strokesIn, useSimplified } from './board-index';
 import type { GeometryCache } from '../document/geometry-cache';
 import { CanvasPathSink, emitGeometry } from '../ink/outline';
 import type { StrokeGeometry } from '../ink/stroke-builder';
@@ -19,9 +21,17 @@ export interface PageRect {
   h: number;
 }
 
-/** Vertical continuous layout, pages centered on x = 0. */
+/**
+ * Vertical continuous layout, pages centered on x = 0. A whiteboard (v7) is one rect at the world
+ * origin, so its page-local coordinates are world coordinates (w/h = its content extent, informative
+ * only: a whiteboard has no edges).
+ */
 export function layoutPages(doc: HandNoteDocument): PageRect[] {
   const out: PageRect[] = [];
+  if (doc.pages.length === 1 && doc.pages[0].board) {
+    const page = doc.pages[0];
+    return [{ page, index: 0, x: 0, y: 0, w: page.width, h: page.height }];
+  }
   let y = 0;
   doc.pages.forEach((page, index) => {
     out.push({ page, index, x: -page.width / 2, y, w: page.width, h: page.height });
@@ -172,6 +182,17 @@ export function paintStrokes(
   opts: PaintOptions = {},
   skip?: ReadonlySet<string>,
 ): number {
+  return paintStrokeList(ctx, page.strokes, cache, opts, skip);
+}
+
+/** paintStrokes for a list of strokes (z-order = list order). */
+export function paintStrokeList(
+  ctx: CanvasRenderingContext2D,
+  list: readonly Stroke[],
+  cache: GeometryCache,
+  opts: PaintOptions = {},
+  skip?: ReadonlySet<string>,
+): number {
   const clip = opts.clip;
   const visible = (g: StrokeGeometry) =>
     !clip || !(g.bbox[2] < clip[0] || g.bbox[0] > clip[2] || g.bbox[3] < clip[1] || g.bbox[1] > clip[3]);
@@ -179,7 +200,7 @@ export function paintStrokes(
 
   // highlighter groups
   const groups = new Map<string, { color: string; opacity: number; strokes: Stroke[] }>();
-  for (const s of page.strokes) {
+  for (const s of list) {
     if (s.tool !== 'highlighter' || skip?.has(s.id)) continue;
     const key = s.color + '|' + s.params.opacity;
     let grp = groups.get(key);
@@ -210,7 +231,7 @@ export function paintStrokes(
   }
 
   // ink, in z-order
-  for (const s of page.strokes) {
+  for (const s of list) {
     if (s.tool === 'highlighter' || skip?.has(s.id)) continue;
     const g = cache.get(s);
     if (!visible(g)) continue;
@@ -244,13 +265,169 @@ export function paintInkStroke(ctx: CanvasRenderingContext2D, s: Stroke, g: Stro
   ctx.globalAlpha = 1;
 }
 
+// ------------------------------------------------------------------------------------------------
+// Whiteboards (0.11)
+// ------------------------------------------------------------------------------------------------
+
+/** Smallest on-screen spacing (px) of the board texture; denser patterns are thinned out ×2. */
+const MIN_PATTERN_PX = 9;
+const MAX_PATTERN_DOTS = 60000;
+const MAX_PATTERN_LINES = 3000;
+
+/** Paint the whiteboard texture over the world rectangle [x0, x1] × [y0, y1], aligned to the world origin. */
+export function paintBoardBackground(ctx: CanvasRenderingContext2D, bg: PageBackground, x0: number, y0: number, x1: number, y1: number, pxPerUnit: number): void {
+  ctx.fillStyle = bg.paper;
+  ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
+  if (bg.kind === 'blank') return;
+  let sp = Math.max(1, bg.spacing);
+  while (sp * pxPerUnit < MIN_PATTERN_PX && sp < 1e5) sp *= 2;
+  // never more than ~60k dots / 3k lines, whatever the area (a view measured very large for a
+  // moment — Obsidian reloading the plugin — painted millions of dots and crashed the renderer)
+  const W = Math.max(0, x1 - x0);
+  const H = Math.max(0, y1 - y0);
+  if (!(W < 1e7 && H < 1e7)) return;
+  if (bg.kind === 'dots') while ((W / sp) * (H / sp) > MAX_PATTERN_DOTS && sp < 1e7) sp *= 2;
+  else while ((W + H) / sp > MAX_PATTERN_LINES && sp < 1e7) sp *= 2;
+  // one fill with a cached tile (a few µs) instead of drawing every dot / line: the texture is
+  // repainted on every frame of a pinch, which on iPad took longer than a frame (the edges stayed
+  // blank and the whole scene was redrawn at once when the fingers lifted)
+  if (paintTiled(ctx, bg, sp, x0, y0, x1, y1, pxPerUnit)) return;
+  const lead = bg.kind === 'ruled' ? 3 : 1; // paintPattern starts at sp (ruled: 3 sp)
+  const ax = Math.floor(x0 / sp) * sp - sp;
+  const ay = Math.floor(y0 / sp) * sp - lead * sp;
+  ctx.save();
+  ctx.translate(ax, ay);
+  paintPattern(ctx, x1 - ax + sp, y1 - ay + sp, { ...bg, spacing: sp }, pxPerUnit);
+  ctx.restore();
+}
+
+const tiles = new Map<string, HTMLCanvasElement>();
+
+/**
+ * The board texture as a repeating pattern: a tile of one cell (sp units) at the device resolution,
+ * scaled so a tile is exactly sp units in the world and anchored at the world origin (so the
+ * texture does not drift when the view moves). False when patterns are not available (tests).
+ */
+function paintTiled(ctx: CanvasRenderingContext2D, bg: PageBackground, sp: number, x0: number, y0: number, x1: number, y1: number, pxPerUnit: number): boolean {
+  if (typeof document === 'undefined' || typeof DOMMatrix === 'undefined') return false;
+  const T = Math.max(4, Math.min(512, Math.round(sp * pxPerUnit)));
+  const key = `${bg.kind}|${bg.line}|${T}`;
+  let tile = tiles.get(key);
+  if (!tile) {
+    if (tiles.size > 24) tiles.clear();
+    tile = document.createElement('canvas');
+    tile.width = tile.height = T;
+    const g = tile.getContext('2d');
+    if (!g) return false;
+    g.fillStyle = bg.line;
+    g.strokeStyle = bg.line;
+    if (bg.kind === 'dots') {
+      // the dot sits in the middle of the tile (the pattern is shifted by half a cell)
+      g.globalAlpha = 0.9;
+      g.beginPath();
+      g.arc(T / 2, T / 2, Math.max(0.7, Math.min(T / 6, 1.1)), 0, Math.PI * 2);
+      g.fill();
+    } else if (bg.kind === 'grid') {
+      g.globalAlpha = 0.8;
+      g.fillRect(0, 0, T, 1);
+      g.fillRect(0, 0, 1, T);
+    } else {
+      g.fillRect(0, 0, T, 1);
+    }
+    tiles.set(key, tile);
+  }
+  const pat = ctx.createPattern(tile, 'repeat');
+  if (!pat || !pat.setTransform) return false;
+  const k = sp / T; // world units per tile pixel
+  const off = bg.kind === 'dots' ? -sp / 2 : 0;
+  pat.setTransform(new DOMMatrix().translate(off, off).scale(k, k));
+  ctx.save();
+  ctx.fillStyle = pat;
+  ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
+  ctx.restore();
+  return true;
+}
+
+/** A frame as a page-shaped value, for the paper and document painters. */
+export function framePage(f: BoardFrame): Page {
+  return { id: f.id, width: f.width, height: f.height, background: f.background, ...(f.doc ? { doc: f.doc } : {}), strokes: [], items: [] };
+}
+
+/** Paint a frame's shadow, paper and document page (world coordinates, ctx in world units). */
+export function paintFrame(ctx: CanvasRenderingContext2D, f: BoardFrame, pxPerUnit: number, shadow: string | null, texture = false): void {
+  ctx.save();
+  ctx.translate(f.x, f.y);
+  if (shadow) {
+    ctx.fillStyle = shadow;
+    ctx.fillRect(1.5 / pxPerUnit, 2 / pxPerUnit, f.width, f.height);
+  }
+  paintPaper(ctx, framePage(f), pxPerUnit, texture);
+  ctx.restore();
+}
+
+/** Whiteboard texture, frames in view and content (ctx in world units). */
+export function paintBoard(
+  ctx: CanvasRenderingContext2D,
+  page: Page,
+  cache: GeometryCache,
+  view: [number, number, number, number],
+  pxPerUnit: number,
+  o: { shadow?: string | null; texture?: boolean; skip?: ReadonlySet<string>; skipFrames?: ReadonlySet<string> } = {},
+): void {
+  const [x0, y0, x1, y1] = view;
+  paintBoardBackground(ctx, page.background, x0, y0, x1, y1, pxPerUnit);
+  for (const f of page.board?.frames ?? []) {
+    if (f.x > x1 || f.x + f.width < x0 || f.y > y1 || f.y + f.height < y0 || o.skipFrames?.has(f.id)) continue;
+    paintFrame(ctx, f, pxPerUnit, o.shadow ?? null, o.texture);
+  }
+  // only the strokes in view (grid index); crowded and zoomed far out: simplified per-cell paths
+  paintItemsBelow(ctx, page, o.skip);
+  const vis = strokesIn(page, view);
+  if (!o.skip?.size && useSimplified(vis.length, pxPerUnit)) paintStrokesSimplified(ctx, page, view, pxPerUnit);
+  else paintStrokeList(ctx, vis, cache, { clip: view }, o.skip);
+  paintItemsAbove(ctx, page, o.skip);
+}
+
+/** Stroke box from the geometry cache (the exact ink outline). */
+export function cachedStrokeBox(cache: GeometryCache): (s: Stroke) => Bounds | null {
+  return (s) => {
+    const b = cache.get(s).bbox;
+    return Number.isFinite(b[0]) ? { x: b[0], y: b[1], w: b[2] - b[0], h: b[3] - b[1] } : null;
+  };
+}
+
+/**
+ * What a full-page render shows, in page coordinates: the page itself, or for a whiteboard its
+ * content bounds plus BOARD_MARGIN on every side.
+ */
+export function pageRenderBox(page: Page, cache?: GeometryCache): Bounds {
+  if (!page.board) return { x: 0, y: 0, w: page.width, h: page.height };
+  void cache;
+  const e = boardExtent(page, roughBounds);
+  return { x: e.x - BOARD_MARGIN, y: e.y - BOARD_MARGIN, w: e.w + 2 * BOARD_MARGIN, h: e.h + 2 * BOARD_MARGIN };
+}
+
 /** Render a full page into a canvas at the given scale (used by embeds and PNG export). */
 export function renderPageToCanvas(
   canvas: HTMLCanvasElement,
   page: Page,
   cache: GeometryCache,
   scale: number,
+  box?: Bounds,
 ): void {
+  if (page.board) {
+    const b = box ?? pageRenderBox(page, cache);
+    const bw = Math.max(1, Math.round(b.w * scale));
+    const bh = Math.max(1, Math.round(b.h * scale));
+    if (canvas.width !== bw) canvas.width = bw;
+    if (canvas.height !== bh) canvas.height = bh;
+    const bctx = canvas.getContext('2d');
+    if (!bctx) return;
+    bctx.setTransform(scale, 0, 0, scale, -b.x * scale, -b.y * scale);
+    bctx.clearRect(b.x, b.y, b.w, b.h);
+    paintBoard(bctx, page, cache, [b.x, b.y, b.x + b.w, b.y + b.h], scale, { shadow: 'rgba(0,0,0,0.12)' });
+    return;
+  }
   const w = Math.max(1, Math.round(page.width * scale));
   const h = Math.max(1, Math.round(page.height * scale));
   if (canvas.width !== w) canvas.width = w;

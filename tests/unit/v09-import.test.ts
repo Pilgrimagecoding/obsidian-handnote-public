@@ -178,13 +178,13 @@ test('v6 format: hostile or malformed references are dropped, never trusted', ()
 });
 
 test('v6 format: a v6 note opens read-only in a version that reads only up to 5 (0.8 behaviour)', () => {
-  // 0.8.x has FORMAT_VERSION 5: version > 5 → read-only (simulated with a v7 file here)
+  // 0.8.x has FORMAT_VERSION 5: version > 5 → read-only (simulated with a v8 file here)
   const doc = createDocument({ pages: 1 });
   const s = source();
   doc.pages = documentPages(s, [{ width: 595, height: 842 }]);
   doc.sources = { [s.id]: s };
-  const v7 = serializeDocument(doc).replace('"version":6', '"version":7');
-  assert.equal(parseDocument(v7).readOnly, true);
+  const v8 = serializeDocument(doc).replace('"version":6', '"version":8');
+  assert.equal(parseDocument(v8).readOnly, true);
 });
 
 // ---- page renderer cache ----

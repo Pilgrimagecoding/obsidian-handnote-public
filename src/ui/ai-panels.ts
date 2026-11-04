@@ -244,3 +244,22 @@ function drawItems(cv: HTMLCanvasElement, items: Item[], w: number, h: number): 
   for (const it of items) if (it.type !== 'text') paintItem(ctx, it);
   for (const it of items) if (it.type === 'text') paintItem(ctx, it);
 }
+
+/** A yes / no question inside the editor (0.11: converting to a whiteboard). Resolves true on OK. */
+export function confirmInEditor(root: HTMLElement, o: { title: string; body: string; ok: string; cancel: string }): Promise<boolean> {
+  return new Promise((resolve) => {
+    let answered = false;
+    const done = (v: boolean) => {
+      if (answered) return;
+      answered = true;
+      m.close();
+      resolve(v);
+    };
+    const m = new Modal(root, 'hn-confirm', o.title, () => done(false));
+    el('p', 'hn-confirm-body', m.body, o.body);
+    const foot = el('div', 'hn-row hn-foot', m.body);
+    button(foot, o.cancel, '', () => done(false));
+    const ok = button(foot, o.ok, 'is-primary', () => done(true));
+    window.setTimeout(() => ok.focus(), 30);
+  });
+}

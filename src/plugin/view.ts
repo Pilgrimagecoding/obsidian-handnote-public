@@ -159,6 +159,7 @@ export class HandNoteView extends FileView {
       recognizer: this.plugin.recognizerBridge(),
       openAISettings: () => this.plugin.openSettings(),
       exportPage: (i, kind) => void this.plugin.exportPage(this, kind, i),
+      exportView: () => void this.plugin.exportView(this),
       imageBlob: async (src) => {
         const f = this.app.vault.getAbstractFileByPath(src);
         if (!(f instanceof TFile)) return null;

@@ -14,8 +14,12 @@ import {
   type Asset,
   type DocKind,
   type DocSource,
+  type Board,
+  type BoardFrame,
+  type PageDoc,
   newId,
 } from './model';
+import { boardExtent } from './board';
 import { LINE_KINDS, fitConnector, normAngle, type Attachment, type Item, type ShapeKind, type TextAlign, type TextFont } from './items';
 import { MAP_LAYOUTS, MAP_LIMITS, MAP_THEMES, nodeId, type MapLayoutId, type MapThemeId, type MindNode } from '../mindmap/model';
 import { stripControl } from '../utils/text';
@@ -101,6 +105,49 @@ export function encodeSamples(samples: readonly InputSample[]): { pts: number[];
   return hasTilt ? { pts, tilt } : { pts };
 }
 
+/** Stored geometry, delta-encoded integers: x, y at 1/100 unit, r at 1/200 unit, as triplets. */
+export function encodeGeometry(g: { xs: number[]; ys: number[]; rs: number[] }): number[] {
+  const out: number[] = [];
+  let px = 0;
+  let py = 0;
+  let pr = 0;
+  for (let i = 0; i < g.xs.length; i++) {
+    const x = Math.round(g.xs[i] * 100);
+    const y = Math.round(g.ys[i] * 100);
+    const r = Math.round(g.rs[i] * 200);
+    out.push(x - px, y - py, r - pr);
+    px = x;
+    py = y;
+    pr = r;
+  }
+  return out;
+}
+
+export function decodeGeometry(v: unknown): { xs: number[]; ys: number[]; rs: number[] } | null {
+  if (!Array.isArray(v)) return null;
+  const arr = v as unknown[];
+  if (arr.length === 0 || arr.length % 3 !== 0 || arr.length > 3 * 200000) return null;
+  const xs: number[] = [];
+  const ys: number[] = [];
+  const rs: number[] = [];
+  let x = 0;
+  let y = 0;
+  let r = 0;
+  for (let i = 0; i < arr.length; i += 3) {
+    const a = arr[i];
+    const b = arr[i + 1];
+    const c = arr[i + 2];
+    if (typeof a !== 'number' || typeof b !== 'number' || typeof c !== 'number' || !Number.isFinite(a + b + c)) return null;
+    x += a;
+    y += b;
+    r += c;
+    xs.push(x / 100);
+    ys.push(y / 100);
+    rs.push(Math.max(0.005, r / 200));
+  }
+  return { xs, ys, rs };
+}
+
 export function decodeSamples(pts: unknown, tilt?: unknown): InputSample[] {
   if (!Array.isArray(pts) || pts.length % 4 !== 0) throw new HandNoteParseError('bad sample array');
   const arr = pts as unknown[];
@@ -159,6 +206,11 @@ function strokeToJson(s: Stroke): string {
   if (s.cut) o.cut = s.cut;
   if (s.dash) o.dash = s.dash;
   if (s.g) o.g = s.g;
+  // the ink as drawn (0.12): what is rendered; older versions ignore it and rebuild from pts
+  if (s.geom && s.geom.xs.length) {
+    o.genc = 'g1';
+    o.geo = encodeGeometry(s.geom);
+  }
   return JSON.stringify(o);
 }
 
@@ -201,6 +253,9 @@ function itemNeedsV5(it: Item): boolean {
 /** Lowest format version that can represent the document (see FORMAT_VERSION). */
 export function requiredVersion(doc: HandNoteDocument): number {
   let v = 1;
+  if (doc.pages.some((p) => !!p.board)) return 7;
+  // cubic curves (0.12): an older version would draw them as quadratics and drop c2 on save
+  if (doc.pages.some((p) => (p.items ?? []).some((it) => it.type === 'shape' && it.c2))) return 7;
   if (doc.pages.some((p) => !!p.doc)) return 6;
   for (const p of doc.pages) {
     for (const it of p.items ?? []) {
@@ -232,11 +287,33 @@ export function referencedAssets(doc: HandNoteDocument): string[] {
 /** Sources referenced by a page (only these are written). */
 export function referencedSources(doc: HandNoteDocument): DocSource[] {
   const out: DocSource[] = [];
-  for (const p of doc.pages) {
-    const s = p.doc ? doc.sources?.[p.doc.src] : undefined;
+  const add = (src: string | undefined) => {
+    const s = src ? doc.sources?.[src] : undefined;
     if (s && !out.includes(s)) out.push(s);
+  };
+  for (const p of doc.pages) {
+    add(p.doc?.src);
+    for (const f of p.board?.frames ?? []) add(f.doc?.src);
   }
   return out;
+}
+
+/** Page header as written (a whiteboard's extent is computed from its content here). */
+function pageHeaderJson(page: Page): Record<string, unknown> {
+  if (page.board) {
+    const e = boardExtent(page);
+    return {
+      id: page.id,
+      width: e.w,
+      height: e.h,
+      background: page.background,
+      board: {
+        origin: [e.x, e.y],
+        frames: page.board.frames.map((f) => ({ id: f.id, x: f.x, y: f.y, width: f.width, height: f.height, background: f.background, ...(f.doc ? { doc: { src: f.doc.src, n: f.doc.n } } : {}) })),
+      },
+    };
+  }
+  return { id: page.id, width: page.width, height: page.height, background: page.background, ...(page.doc ? { doc: { src: page.doc.src, n: page.doc.n } } : {}) };
 }
 
 export function serializeDocument(doc: HandNoteDocument): string {
@@ -257,7 +334,7 @@ export function serializeDocument(doc: HandNoteDocument): string {
   lines.push(h.slice(0, -1) + ',');
   lines.push('"pages":[');
   doc.pages.forEach((page, pi) => {
-    const ph = JSON.stringify({ id: page.id, width: page.width, height: page.height, background: page.background, ...(page.doc ? { doc: { src: page.doc.src, n: page.doc.n } } : {}) });
+    const ph = JSON.stringify(pageHeaderJson(page));
     lines.push(ph.slice(0, -1) + ',"strokes":[');
     page.strokes.forEach((s, si) => {
       lines.push(strokeToJson(s) + (si < page.strokes.length - 1 ? ',' : ''));
@@ -331,7 +408,15 @@ export function validateStroke(o: unknown, warnings: string[]): Stroke | null {
     ...(typeof r.cut === 'number' && r.cut > 0 && r.cut <= 3 ? { cut: Math.round(r.cut) } : {}),
     ...(r.dash === 'dash' || r.dash === 'dot' ? { dash: r.dash } : {}),
     ...(groupId(r.g) ? { g: r.g as string } : {}),
+    ...storedGeometry(r),
   };
+}
+
+/** The stored ink (0.12) when present and well-formed; otherwise the stroke is built from its samples. */
+function storedGeometry(r: Record<string, unknown>): { geom?: { xs: number[]; ys: number[]; rs: number[] } } {
+  if (r.genc !== 'g1' || r.geo === undefined) return {};
+  const geom = decodeGeometry(r.geo);
+  return geom ? { geom } : {};
 }
 
 function groupId(v: unknown): boolean {
@@ -453,6 +538,8 @@ export function validateItem(o: unknown, warnings: string[]): Item | null {
       sh.b = b;
       const c = pt(r.c);
       if (kind === 'curve') sh.c = c ?? [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+      const c2 = pt(r.c2);
+      if (kind === 'curve' && c2 && c) sh.c2 = c2;
       if (kind === 'polyline' && Array.isArray(r.pts) && r.pts.length % 2 === 0 && r.pts.length <= ITEM_LIMITS.polyPoints * 2 && r.pts.every(finite)) {
         sh.pts = (r.pts).map(cl);
       }
@@ -529,19 +616,52 @@ function validateBackground(o: unknown): PageBackground {
   };
 }
 
+function validatePageDoc(d: unknown): PageDoc | undefined {
+  const r = d as Record<string, unknown> | undefined;
+  return r && typeof r === 'object' && typeof r.src === 'string' && /^[\w-]{1,64}$/.test(r.src) && Number.isInteger(r.n) && (r.n as number) >= 1 && (r.n as number) <= 100000 ? { src: r.src, n: r.n as number } : undefined;
+}
+
+/** Coordinates on a whiteboard are kept within ±BOARD_LIMIT units (float precision of the camera). */
+export const BOARD_LIMIT = 1e6;
+
+function validateBoard(o: unknown): Board | undefined {
+  if (!o || typeof o !== 'object') return undefined;
+  const r = o as Record<string, unknown>;
+  const lim = (v: unknown) => Math.max(-BOARD_LIMIT, Math.min(BOARD_LIMIT, num(v, 0)));
+  const og = Array.isArray(r.origin) ? r.origin : [];
+  const frames: BoardFrame[] = [];
+  const ids = new Set<string>();
+  if (Array.isArray(r.frames)) {
+    for (const fo of r.frames.slice(0, 10000)) {
+      if (!fo || typeof fo !== 'object') continue;
+      const f = fo as Record<string, unknown>;
+      const width = num(f.width, 0);
+      const height = num(f.height, 0);
+      if (!(width > 1 && width <= 100000 && height > 1 && height <= 100000)) continue;
+      let id = typeof f.id === 'string' && /^[\w-]{1,64}$/.test(f.id) ? f.id : newId('f');
+      if (ids.has(id)) id = newId('f');
+      ids.add(id);
+      const doc = validatePageDoc(f.doc);
+      frames.push({ id, x: lim(f.x), y: lim(f.y), width, height, background: validateBackground(f.background), ...(doc ? { doc } : {}) });
+    }
+  }
+  return { origin: [lim(og[0]), lim(og[1])], frames };
+}
+
 function validatePageHeader(o: unknown): Page | null {
   if (!o || typeof o !== 'object') return null;
   const r = o as Record<string, unknown>;
   const width = num(r.width, 595);
   const height = num(r.height, 842);
-  const d = r.doc as Record<string, unknown> | undefined;
-  const doc = d && typeof d === 'object' && typeof d.src === 'string' && /^[\w-]{1,64}$/.test(d.src) && Number.isInteger(d.n) && (d.n as number) >= 1 && (d.n as number) <= 100000 ? { src: d.src, n: d.n as number } : undefined;
+  const doc = validatePageDoc(r.doc);
+  const board = validateBoard(r.board);
   return {
     id: str(r.id, newId('p')),
     width: width > 10 ? width : 595,
     height: height > 10 ? height : 842,
     background: validateBackground(r.background),
     ...(doc ? { doc } : {}),
+    ...(board ? { board } : {}),
     strokes: [],
     items: [],
   };
@@ -602,6 +722,11 @@ function validateDocument(o: unknown, warnings: string[]): { doc: HandNoteDocume
       }
       pages.push(page);
     }
+  }
+  if (pages.length > 1 && pages.some((p) => p.board)) {
+    // a whiteboard is a document with one page; anything else is read as a note with pages
+    warnings.push('Whiteboard data on a document with several pages was ignored');
+    for (const p of pages) delete p.board;
   }
   let assets: Record<string, Asset> | undefined;
   if (Array.isArray(r.assets)) {

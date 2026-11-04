@@ -461,6 +461,19 @@ test('pen tablet: Space + pen drag pans instead of drawing; pen middle button pa
   assert.equal(host.committed, 1);
 });
 
+test('hand tool: pen, mouse and finger all pan; nothing is drawn; finger drawing off while the hand is on', () => {
+  const { host, r } = setup({ fingerDrawing: true });
+  r.setOptions({ hand: true });
+  drag(r, 1, 'pen', 100, 100, 0, -50);
+  drag(r, 2, 'mouse', 100, 100, 0, -50);
+  drag(r, 3, 'touch', 100, 100, 0, -50);
+  assert.equal(host.committed, 0);
+  assert.ok(host.cam.y > 100, JSON.stringify(host.cam));
+  r.setOptions({ hand: false });
+  drag(r, 4, 'pen', 0, 0, 40, 40);
+  assert.equal(host.committed, 1);
+});
+
 test('right mouse button is not consumed', () => {
   const { r } = setup();
   assert.equal(r.down(ptr(1, 'mouse', 10, 10, { button: 2, buttons: 2 })), null);

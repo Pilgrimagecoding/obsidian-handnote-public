@@ -27,6 +27,30 @@ export interface PagesSidebarModel {
   onClear(i: number): void;
   onDelete(i: number): void;
   onClose(): void;
+  /** 0.10: the note has imported documents whose contents (bookmarks) can be shown. */
+  hasContents?(): boolean;
+  /** 0.10: contents of the note's documents, mapped to note pages. */
+  contents?(): Promise<ContentsGroup[]>;
+  /** 0.11: the note is a whiteboard — one thumbnail, no page actions (add, move, delete). */
+  board?(): boolean;
+  /** 0.11: a contents entry was tapped (whiteboard: `i` is a frame in board order). Default: onGo. */
+  onGoContents?(i: number): void;
+}
+
+/** One contents entry: `index` is the note page it opens (null: that page is not in the note). */
+export interface ContentsEntry {
+  title: string;
+  index: number | null;
+  /** page number in the original, shown at the right */
+  label: string;
+  items: ContentsEntry[];
+}
+
+/** The contents of one imported document (`error`: why it could not be read). */
+export interface ContentsGroup {
+  name: string;
+  entries: ContentsEntry[];
+  error?: string;
 }
 
 export const THUMB_BOX_W = 96;
@@ -67,6 +91,10 @@ export class PagesSidebar {
   private drag: DragState | null = null;
   private autoScroll = 0;
   private pendingRender = false;
+  private mode: 'pages' | 'contents' = 'pages';
+  private toc: HTMLElement | null = null;
+  private tabs: { pages: HTMLButtonElement; contents: HTMLButtonElement } | null = null;
+  private tocLoaded = false;
 
   constructor(
     private readonly root: HTMLElement,
@@ -82,6 +110,20 @@ export class PagesSidebar {
     close.title = t('close');
     setHnIcon(close, 'close');
     onTap(close, () => this.m.onClose());
+    if (this.m.hasContents?.()) {
+      // 0.10: [Pages | Contents] instead of the plain title
+      this.titleEl.classList.add('is-hidden');
+      const seg = el('div', 'hn-ps-tabs', head);
+      head.insertBefore(seg, close);
+      const tab = (label: string, mode: 'pages' | 'contents') => {
+        const b = el('button', 'hn-ps-tab', seg, label);
+        b.type = 'button';
+        onTap(b, () => this.setMode(mode));
+        return b;
+      };
+      this.tabs = { pages: tab(t('pages'), 'pages'), contents: tab(t('contents'), 'contents') };
+      this.tabs.pages.classList.add('is-active');
+    }
     this.list = el('div', 'hn-ps-list', this.el);
     this.marker = el('div', 'hn-ps-marker', this.list);
     hide(this.marker);
@@ -95,6 +137,116 @@ export class PagesSidebar {
     );
     this.list.addEventListener('scroll', () => this.closeMenu(), { passive: true });
     this.render();
+  }
+
+  /** Show the page grid or the contents (bookmarks) of the note's documents. */
+  setMode(mode: 'pages' | 'contents'): void {
+    if (mode === 'contents' && !this.m.contents) return;
+    this.mode = mode;
+    this.tabs?.pages.classList.toggle('is-active', mode === 'pages');
+    this.tabs?.contents.classList.toggle('is-active', mode === 'contents');
+    this.list.classList.toggle('is-hidden', mode !== 'pages');
+    if (mode === 'contents') {
+      if (!this.toc) this.toc = el('div', 'hn-ps-toc', this.el);
+      this.toc.classList.remove('is-hidden');
+      if (!this.tocLoaded) void this.loadContents();
+    } else {
+      this.toc?.classList.add('is-hidden');
+    }
+  }
+
+  get currentMode(): 'pages' | 'contents' {
+    return this.mode;
+  }
+
+  private async loadContents(): Promise<void> {
+    const toc = this.toc;
+    if (!toc || !this.m.contents) return;
+    this.tocLoaded = true;
+    toc.textContent = '';
+    el('div', 'hn-ps-toc-note', toc, t('contentsLoading'));
+    let groups: ContentsGroup[];
+    try {
+      groups = await this.m.contents();
+    } catch {
+      groups = [];
+    }
+    if (this.toc !== toc) return;
+    toc.textContent = '';
+    const any = groups.some((g) => g.entries.length || g.error);
+    if (!any) {
+      el('div', 'hn-ps-toc-note', toc, t('contentsEmpty'));
+      return;
+    }
+    const many = groups.length > 1;
+    for (const g of groups) {
+      if (many || g.error) el('div', 'hn-ps-toc-doc', toc, g.name);
+      if (g.error) {
+        el('div', 'hn-ps-toc-note', toc, g.error);
+        continue;
+      }
+      if (!g.entries.length) {
+        el('div', 'hn-ps-toc-note', toc, t('contentsEmpty'));
+        continue;
+      }
+      this.renderEntries(toc, g.entries, 0);
+    }
+    this.markContents(this.m.current());
+  }
+
+  private renderEntries(parent: HTMLElement, entries: ContentsEntry[], depth: number): void {
+    for (const e of entries) {
+      const row = el('div', 'hn-ps-toc-row', parent);
+      row.style.paddingLeft = `${4 + depth * 14}px`;
+      const twisty = el('button', 'hn-ps-toc-twisty', row);
+      twisty.type = 'button';
+      const btn = el('button', 'hn-ps-toc-item', row);
+      btn.type = 'button';
+      el('span', 'hn-ps-toc-title', btn, e.title);
+      el('span', 'hn-ps-toc-page', btn, e.label);
+      if (e.index === null) {
+        btn.disabled = true;
+        btn.title = t('contentsNotInNote');
+      } else {
+        btn.dataset.index = String(e.index);
+        const i = e.index;
+        onTap(btn, () => (this.m.onGoContents ? this.m.onGoContents(i) : this.m.onGo(i)));
+      }
+      if (e.items.length) {
+        const kids = el('div', 'hn-ps-toc-kids', parent);
+        // first level open, deeper levels folded (long books stay readable)
+        const open = depth === 0;
+        kids.classList.toggle('is-hidden', !open);
+        setHnIcon(twisty, open ? 'chevron-down' : 'chevron-right');
+        twisty.setAttribute('aria-expanded', String(open));
+        onTap(twisty, () => {
+          const nowOpen = kids.classList.contains('is-hidden');
+          kids.classList.toggle('is-hidden', !nowOpen);
+          setHnIcon(twisty, nowOpen ? 'chevron-down' : 'chevron-right');
+          twisty.setAttribute('aria-expanded', String(nowOpen));
+        });
+        this.renderEntries(kids, e.items, depth + 1);
+      } else {
+        twisty.classList.add('is-empty');
+        twisty.tabIndex = -1;
+      }
+    }
+  }
+
+  /** Highlight the last visible-order entry at or before the current page. */
+  private markContents(cur: number): void {
+    if (!this.toc) return;
+    let best: HTMLElement | null = null;
+    let bestIndex = -1;
+    for (const b of Array.from(this.toc.querySelectorAll<HTMLElement>('.hn-ps-toc-item[data-index]'))) {
+      b.classList.remove('is-current');
+      const i = Number(b.dataset.index);
+      if (i <= cur && i >= bestIndex) {
+        best = b;
+        bestIndex = i;
+      }
+    }
+    best?.classList.add('is-current');
   }
 
   /** Rebuild the grid (keeps the scroll position). */
@@ -126,8 +278,10 @@ export class PagesSidebar {
     for (const c of Array.from(this.list.querySelectorAll('.hn-ps-cell'))) c.remove();
     const n = this.m.count();
     const cur = this.m.current();
-    const ro = this.m.readOnly();
-    this.titleEl.textContent = `${t('pages')} · ${n}`;
+    const board = this.m.board?.() ?? false;
+    const ro = this.m.readOnly() || board;
+    this.titleEl.textContent = board ? t('board') : `${t('pages')} · ${n}`;
+    if (this.tabs) this.tabs.pages.textContent = board ? t('board') : `${t('pages')} · ${n}`;
     for (let i = 0; i < n; i++) {
       const cell = el('div', 'hn-ps-cell' + (i === cur ? ' is-current' : ''), this.list);
       cell.dataset.index = String(i);
@@ -138,7 +292,12 @@ export class PagesSidebar {
       box.style.height = `${THUMB_BOX_H}px`;
       this.bindThumb(box, cell, i);
       const foot = el('div', 'hn-ps-foot', cell);
-      el('span', 'hn-ps-num', foot, String(i + 1));
+      el('span', 'hn-ps-num', foot, board ? t('board') : String(i + 1));
+      if (board) {
+        if (this.io) this.io.observe(box);
+        else this.fillThumb(box);
+        continue;
+      }
       const more = el('button', 'hn-ps-more', foot);
       more.type = 'button';
       more.setAttribute('aria-label', `${t('pageOptions')} ${i + 1}`);
@@ -182,6 +341,7 @@ export class PagesSidebar {
 
   /** Highlight the current page without rebuilding (scrolling the document). */
   setCurrent(i: number, reveal = false): void {
+    if (this.toc) this.markContents(i);
     this.list.querySelectorAll('.hn-ps-cell.is-current').forEach((c) => c.classList.remove('is-current'));
     const cell = this.list.querySelector<HTMLElement>(`.hn-ps-cell[data-index="${i}"]`);
     if (!cell) return;
@@ -254,7 +414,7 @@ export class PagesSidebar {
       };
       this.drag = d;
       cell.classList.add('is-pressed');
-      if (!mouse && !this.m.readOnly()) d.timer = window.setTimeout(() => this.startDrag(d, d.lastX, d.lastY), LONG_PRESS_MS);
+      if (!mouse && !this.m.readOnly() && !this.m.board?.()) d.timer = window.setTimeout(() => this.startDrag(d, d.lastX, d.lastY), LONG_PRESS_MS);
       try {
         box.setPointerCapture(e.pointerId);
       } catch {
@@ -286,7 +446,7 @@ export class PagesSidebar {
       const moved = Math.hypot(e.clientX - d.startX, e.clientY - d.startY);
       if (!d.active) {
         if (moved > DRAG_SLOP) {
-          if (d.mouse && !this.m.readOnly()) this.startDrag(d, e.clientX, e.clientY);
+          if (d.mouse && !this.m.readOnly() && !this.m.board?.()) this.startDrag(d, e.clientX, e.clientY);
           else this.endGesture(); // a finger that moves before the long press scrolls the list
         }
         return;

@@ -74,8 +74,10 @@ export interface ShapeItem extends ItemBase {
   /** connectors: end points in page units (x, y, w, h are the bounding box of the path). */
   a?: [number, number];
   b?: [number, number];
-  /** curve: quadratic Bézier control point (page units). */
+  /** curve: quadratic Bézier control point (page units); with c2 the first control point of a cubic. */
   c?: [number, number];
+  /** curve: second control point of a cubic Bézier (0.12: U, S and J shapes of the shape pen). */
+  c2?: [number, number];
   /** polyline: interior vertices in page units [x0, y0, x1, y1, ...] (between a and b). */
   pts?: number[];
   from?: Attachment;
@@ -152,6 +154,39 @@ export function quadPoint(a: Pt, c: Pt, b: Pt, t: number): Pt {
   return [u * u * a[0] + 2 * u * t * c[0] + t * t * b[0], u * u * a[1] + 2 * u * t * c[1] + t * t * b[1]];
 }
 
+export function cubicPoint(a: Pt, c1: Pt, c2: Pt, b: Pt, t: number): Pt {
+  const u = 1 - t;
+  const b0 = u * u * u;
+  const b1 = 3 * u * u * t;
+  const b2 = 3 * u * t * t;
+  const b3 = t * t * t;
+  return [b0 * a[0] + b1 * c1[0] + b2 * c2[0] + b3 * b[0], b0 * a[1] + b1 * c1[1] + b2 * c2[1] + b3 * b[1]];
+}
+
+/** The middle of a curve item (quadratic or cubic): its drag handle. */
+export function curveMidOf(it: { a: Pt; b: Pt; c: Pt; c2?: Pt }): Pt {
+  return it.c2 ? cubicPoint(it.a, it.c, it.c2, it.b, 0.5) : quadPoint(it.a, it.c, it.b, 0.5);
+}
+
+/**
+ * Map a point that belongs to the chord a→b onto the chord na→nb (rotation + uniform scale +
+ * translation): a curve whose ends move keeps its shape relative to them.
+ */
+export function chordMap(a: Pt, b: Pt, na: Pt, nb: Pt, p: Pt): Pt {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const l2 = dx * dx + dy * dy;
+  if (l2 < 1e-9) return [p[0] + na[0] - a[0], p[1] + na[1] - a[1]];
+  const ndx = nb[0] - na[0];
+  const ndy = nb[1] - na[1];
+  // complex division (nd / d) gives the rotation + scale
+  const re = (ndx * dx + ndy * dy) / l2;
+  const im = (ndy * dx - ndx * dy) / l2;
+  const px = p[0] - a[0];
+  const py = p[1] - a[1];
+  return [na[0] + px * re - py * im, na[1] + px * im + py * re];
+}
+
 /** The point on the curve at t = 0.5 (used as the curve's drag handle). */
 export function curveMid(a: Pt, c: Pt, b: Pt): Pt {
   return quadPoint(a, c, b, 0.5);
@@ -186,7 +221,9 @@ export function connectorPoints(it: ShapeItem & { a: Pt; b: Pt }, n = 32): Pt[] 
   if (it.kind === 'polyline') return polyPts(it);
   if (it.kind === 'curve' && it.c) {
     const out: Pt[] = [];
-    for (let i = 0; i <= n; i++) out.push(quadPoint(it.a, it.c, it.b, i / n));
+    const c = it.c;
+    const c2 = it.c2;
+    for (let i = 0; i <= n; i++) out.push(c2 ? cubicPoint(it.a, c, c2, it.b, i / n) : quadPoint(it.a, c, it.b, i / n));
     return out;
   }
   return [it.a, it.b];
@@ -194,6 +231,13 @@ export function connectorPoints(it: ShapeItem & { a: Pt; b: Pt }, n = 32): Pt[] 
 
 /** Direction points for the arrow heads: [from, tip] at the start and at the end. */
 export function arrowTangents(it: ShapeItem & { a: Pt; b: Pt }): { start: [Pt, Pt]; end: [Pt, Pt] } {
+  if (it.kind === 'curve' && it.c && it.c2) {
+    // cubic: the tangents point at the nearer control point (fallback: the other one, then the chord)
+    const far = (p: Pt, q: Pt) => Math.hypot(p[0] - q[0], p[1] - q[1]) > 0.01;
+    const cs = far(it.c, it.a) ? it.c : far(it.c2, it.a) ? it.c2 : it.b;
+    const ce = far(it.c2, it.b) ? it.c2 : far(it.c, it.b) ? it.c : it.a;
+    return { start: [cs, it.a], end: [ce, it.b] };
+  }
   if (it.kind === 'curve' && it.c) {
     // tangent at the ends of a quadratic is towards the control point (fallback: the chord)
     const cs = Math.hypot(it.c[0] - it.a[0], it.c[1] - it.a[1]) > 0.01 ? it.c : it.b;
@@ -311,8 +355,11 @@ export function resolveConnectors(items: Item[]): Item[] {
     }
     if (a[0] === it.a[0] && a[1] === it.a[1] && b[0] === it.b[0] && b[1] === it.b[1]) return it;
     changed = true;
-    // a curve keeps its bulge relative to the moved chord
+    // a curve keeps its bulge relative to the moved chord (a cubic: its whole shape)
     let c = it.c;
+    if (c && it.c2) {
+      return fitConnector({ ...it, a, b, c: chordMap(it.a, it.b, a, b, c), c2: chordMap(it.a, it.b, a, b, it.c2) });
+    }
     if (c) {
       const m = curveMid(it.a, c, it.b);
       const off: Pt = [m[0] - (it.a[0] + it.b[0]) / 2, m[1] - (it.a[1] + it.b[1]) / 2];
@@ -415,6 +462,7 @@ export function shapeOutline(it: ShapeItem, n = 48): Pt[] {
 function mapConnector(it: ShapeItem & { a: Pt; b: Pt }, f: (p: Pt) => Pt): ShapeItem {
   const n: ShapeItem = { ...it, a: f(it.a), b: f(it.b) };
   if (it.c) n.c = f(it.c);
+  if (it.c2) n.c2 = f(it.c2);
   if (it.pts) {
     const out: number[] = [];
     for (let i = 0; i + 1 < it.pts.length; i += 2) out.push(...f([it.pts[i], it.pts[i + 1]]));

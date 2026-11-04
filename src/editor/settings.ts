@@ -118,6 +118,8 @@ export interface EditorSettings {
   fingerDrawing: boolean;
   /** Extend the live stroke with PointerEvent.getPredictedEvents() where available. */
   usePrediction: boolean;
+  /** A highlighter stroke that is nearly straight becomes an exactly straight one (0.12, like GoodNotes). */
+  highlighterStraight: boolean;
   /** Two-finger tap = undo, three-finger tap = redo. */
   tapGestures: boolean;
   /**
@@ -128,6 +130,8 @@ export interface EditorSettings {
   showHud: boolean;
   newPagePaper: string; // paper preset id
   newPageBackground: BackgroundKind;
+  /** 0.10: pulling past the bottom of the last page adds a page (GoodNotes-style). */
+  pullToAddPage: boolean;
 }
 
 /** Eraser radius in screen px for each size step. */
@@ -172,15 +176,17 @@ export function defaultEditorSettings(): EditorSettings {
     subbarOpen: true,
     fingerDrawing: false,
     usePrediction: false,
+    highlighterStraight: true,
     tapGestures: true,
     fingerDoubleTapEraser: true,
     showHud: false,
     newPagePaper: 'a4',
     newPageBackground: 'ruled',
+    pullToAddPage: true,
   };
 }
 
-const TOOLS: Tool[] = ['fountain', 'pencil', 'ballpoint', 'highlighter', 'eraser', 'text', 'image', 'shape', 'lasso', 'laser'];
+const TOOLS: Tool[] = ['fountain', 'pencil', 'ballpoint', 'highlighter', 'eraser', 'text', 'image', 'shape', 'lasso', 'laser', 'hand'];
 const INK: InkTool[] = ['fountain', 'pencil', 'ballpoint', 'highlighter'];
 const BGS: BackgroundKind[] = ['blank', 'ruled', 'grid', 'dots'];
 const SHAPES: ShapeKind[] = ['rect', 'roundrect', 'ellipse', 'triangle', 'diamond', 'line', 'arrow', 'elbow', 'curve'];
@@ -290,11 +296,13 @@ export function sanitizeEditorSettings(raw: unknown): EditorSettings {
     fingerDrawing: r.fingerDrawing === true,
     // v0.1 → v0.2 migration: predicted ink is reset to OFF (default) until device data shows it helps
     usePrediction: r.fountainVariant === undefined ? false : r.usePrediction === true,
+    highlighterStraight: r.highlighterStraight !== false,
     tapGestures: r.tapGestures !== false,
     fingerDoubleTapEraser: r.fingerDoubleTapEraser !== false,
     showHud: r.showHud === true,
     newPagePaper: typeof r.newPagePaper === 'string' ? r.newPagePaper : d.newPagePaper,
     newPageBackground: BGS.includes(r.newPageBackground as BackgroundKind) ? (r.newPageBackground as BackgroundKind) : d.newPageBackground,
+    pullToAddPage: r.pullToAddPage !== false,
   };
 }
 

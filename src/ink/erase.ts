@@ -1,5 +1,6 @@
 import type { InputSample } from './types';
-import { newId, type Stroke } from '../document/model';
+import { newId, type StoredGeometry, type Stroke } from '../document/model';
+import { COMMIT_TAPER, COMMIT_TAPER_DEPTH, INK_PIPELINE, buildStrokeGeometry, quantizeGeometry, simplifyGeometry } from './stroke-builder';
 
 /**
  * Partial eraser: cut the raw samples of a stroke where an eraser capsule (segment a→b with
@@ -99,6 +100,17 @@ function arcLength(s: InputSample[]): number {
   return L;
 }
 
+/**
+ * The ink of an eraser fragment (0.12): built from the fragment's samples — square at the cut
+ * ends, the pen-lift end tapered like a drawn stroke — and stored with it, so the fragment looks
+ * the same after a reload.
+ */
+export function fragmentGeometry(frag: Stroke): StoredGeometry {
+  const cut = frag.cut ?? 0;
+  const params = { ...frag.params, tapering: frag.params.tapering * COMMIT_TAPER };
+  return quantizeGeometry(simplifyGeometry(buildStrokeGeometry(frag.samples, frag.tool, params, { zoom: frag.zoom, hasPressure: frag.hasPressure, engine: frag.engine, cutStart: (cut & 1) !== 0, cutEnd: (cut & 2) !== 0, ink: INK_PIPELINE }, COMMIT_TAPER_DEPTH)));
+}
+
 /** Cut one stroke. Returns null when untouched, otherwise the fragments (possibly none). */
 export function cutStroke(stroke: Stroke, ax: number, ay: number, bx: number, by: number, eraserRadius: number, precise: boolean): Stroke[] | null {
   const halfW = stroke.params.width / 2;
@@ -120,6 +132,9 @@ export function cutStroke(stroke: Stroke, ax: number, ay: number, bx: number, by
     };
     if (flags) frag.cut = flags;
     else delete frag.cut;
+    // a drawn stroke's piece gets its ink regenerated from its samples (cut ends square) and stored
+    if (stroke.geom) frag.geom = fragmentGeometry(frag);
+    else delete frag.geom;
     out.push(frag);
   }
   return out;

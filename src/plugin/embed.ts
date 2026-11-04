@@ -2,11 +2,12 @@ import { TFile, type MarkdownPostProcessorContext } from 'obsidian';
 import { parseDocument } from '../document/codec';
 import { GeometryCache } from '../document/geometry-cache';
 import type { HandNoteDocument } from '../document/model';
-import { renderPageToCanvas } from '../rendering/paint';
+import { framePage, pageRenderBox, renderPageToCanvas } from '../rendering/paint';
 import { preloadImages, registerAssets } from '../rendering/items-paint';
 import { ensureDocPage, registerSources } from '../rendering/doc-layer';
 import type HandNotePlugin from './main';
 import { EXTENSION } from './view';
+import { t } from '../ui/i18n';
 
 /**
  * Renders ![[note.handnote]] embeds in Markdown (Reading view and Live Preview).
@@ -153,6 +154,20 @@ export class EmbedManager {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     for (const page of pages) {
       const canvas = pagesEl.createEl('canvas', { cls: 'hn-embed-page' });
+      if (page.board) {
+        // whiteboard: its whole content, as wide as the note but at most 600 px high
+        const b = pageRenderBox(page, data.geo);
+        const cssW = Math.min(width, (600 * b.w) / b.h);
+        const bs = Math.min((cssW * dpr) / b.w, 2400 / Math.max(b.w, b.h));
+        renderPageToCanvas(canvas, page, data.geo, bs, b);
+        canvas.style.aspectRatio = `${b.w} / ${b.h}`;
+        canvas.style.maxWidth = `${Math.round(cssW)}px`;
+        canvas.addClass('is-board');
+        if (page.items?.some((i) => i.type === 'image')) void preloadImages(page).then(() => renderPageToCanvas(canvas, page, data.geo, bs, b));
+        const frames = page.board.frames.filter((f) => f.doc);
+        if (frames.length) void Promise.all(frames.map((f) => ensureDocPage(framePage(f), bs))).then(() => renderPageToCanvas(canvas, page, data.geo, bs, b));
+        continue;
+      }
       const scale = Math.min((width * dpr) / page.width, 2400 / page.width);
       renderPageToCanvas(canvas, page, data.geo, scale);
       canvas.style.aspectRatio = `${page.width} / ${page.height}`;
@@ -162,7 +177,7 @@ export class EmbedManager {
     }
     const more = data.doc.pages.length - pages.length;
     const footer = box.createDiv({ cls: 'hn-embed-footer' });
-    footer.setText(`✒ ${file.basename}${more > 0 ? ` · +${more} more page${more > 1 ? 's' : ''}` : ''} · tap to edit`);
+    footer.setText(`✒ ${file.basename}${data.doc.pages[0]?.board ? ` · ${t('board')}` : ''}${more > 0 ? ` · +${more} more page${more > 1 ? 's' : ''}` : ''} · tap to edit`);
     this.mounted.set(el, { path: file.path, mtime: file.stat.mtime, width });
     this.live.add(el);
   }

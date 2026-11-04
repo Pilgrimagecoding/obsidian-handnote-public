@@ -1,4 +1,5 @@
 import {
+  Menu,
   Modal,
   Notice,
   Plugin,
@@ -17,14 +18,16 @@ import {
 } from 'obsidian';
 import { serializeDocument } from '../document/codec';
 import { createDocument, defaultBackground, paperById, PAPER_PRESETS, type BackgroundKind } from '../document/model';
+import { createBoardDocument } from '../document/board';
 import { GeometryCache } from '../document/geometry-cache';
-import { renderPageToCanvas } from '../rendering/paint';
+import { framePage, pageRenderBox, renderPageToCanvas } from '../rendering/paint';
 import { pageToSvg } from '../rendering/svg-export';
 import { preloadImages, setImageResolver } from '../rendering/items-paint';
 import { languageOf, setLanguage, t } from '../ui/i18n';
 import { AIService } from '../ai/service';
 import { myscriptHttp, obsidianHttp, renderAISettings, secretStorage, secretsSupported } from './ai-settings';
-import type { AIBridge } from '../editor/handnote-editor';
+import type { AIBridge, HandNoteEditor } from '../editor/handnote-editor';
+import type { Tool } from '../ink/types';
 import type { RecognitionBridge } from '../editor/convert-flow';
 import { HandwritingRecognitionService } from '../recognition/service';
 import { renderFormula, setMathEngine } from '../rendering/formula';
@@ -143,7 +146,13 @@ export default class HandNotePlugin extends Plugin {
       console.warn('HandNote: could not register .handnote extension', e);
     }
 
-    this.addRibbonIcon('pen-tool', 'New handwritten note', () => void this.createAndOpen());
+    // 0.11: the ribbon icon asks what to create — a handwritten note or an infinite whiteboard
+    this.addRibbonIcon('pen-tool', t('newNoteKind') + ' HandNote', (evt) => {
+      const menu = new Menu();
+      menu.addItem((i) => i.setTitle(t('newNote')).setIcon('pen-tool').onClick(() => void this.createAndOpen('note')));
+      menu.addItem((i) => i.setTitle(t('newBoard')).setIcon('frame').onClick(() => void this.createAndOpen('board')));
+      menu.showAtMouseEvent(evt);
+    });
     this.importer = new DocumentImporter(this);
     this.addCommand({
       id: 'import-document',
@@ -155,6 +164,11 @@ export default class HandNotePlugin extends Plugin {
       id: 'create',
       name: 'New handwritten note',
       callback: () => void this.createAndOpen(),
+    });
+    this.addCommand({
+      id: 'create-board',
+      name: t('cmd.newBoard'),
+      callback: () => void this.createAndOpen('board'),
     });
     this.addCommand({
       id: 'local-selftest',
@@ -227,6 +241,54 @@ export default class HandNotePlugin extends Plugin {
       name: 'Export current page as SVG',
       checkCallback: (checking) => this.withView(checking, (v) => void this.exportPage(v, 'svg')),
     });
+    // 0.10: every tool and page action as a command, so it can get its own hotkey
+    // (Settings → Hotkeys → search "HandNote"). The single keys in the editor (1/2/3/E/T/L/H) stay.
+    const tools: [string, Tool][] = [
+      ['fountain', 'fountain'],
+      ['pencil', 'pencil'],
+      ['highlighter', 'highlighter'],
+      ['eraser', 'eraser'],
+      ['lasso', 'lasso'],
+      ['text', 'text'],
+      ['shape', 'shape'],
+      ['hand', 'hand'],
+    ];
+    for (const [id, tool] of tools) {
+      this.addCommand({
+        id: `tool-${id}`,
+        name: t(`cmd.${id}`),
+        checkCallback: (checking) => this.withView(checking, (v) => v.editor?.setTool(tool)),
+      });
+    }
+    // `when`: the command is offered only for notes with pages ('pages') or whiteboards ('board')
+    const pageCmds: [string, (e: HandNoteEditor) => void, ('pages' | 'board')?][] = [
+      ['toggleHand', (e) => e.toggleHand()],
+      ['prevPage', (e) => (e.isBoard ? e.stepFrame(-1) : e.gotoPage(e.currentPageIndex() - 1))],
+      ['nextPage', (e) => (e.isBoard ? e.stepFrame(1) : e.gotoPage(e.currentPageIndex() + 1))],
+      ['goToPage', (e) => e.openGoToPage(), 'pages'],
+      ['addPage', (e) => e.addPageAfterCurrent(), 'pages'],
+      ['fitWidth', (e) => e.fitWidth()],
+      ['fitPage', (e) => e.fitPage()],
+      ['pages', (e) => e.openPagesPanel()],
+      ['contents', (e) => e.openContents()],
+      ['convertBoard', (e) => void e.convertToBoard(), 'pages'],
+      ['fitContent', (e) => e.fitContent(), 'board'],
+      ['prevFrame', (e) => e.stepFrame(-1), 'board'],
+      ['nextFrame', (e) => e.stepFrame(1), 'board'],
+    ];
+    for (const [id, run, when] of pageCmds) {
+      this.addCommand({
+        id: id.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase()),
+        name: t(`cmd.${id}`),
+        checkCallback: (checking) => {
+          const v = this.app.workspace.getActiveViewOfType(HandNoteView);
+          const e = v?.editor;
+          if (!e || (when === 'pages' && e.isBoard) || (when === 'board' && !e.isBoard)) return false;
+          if (!checking) run(e);
+          return true;
+        },
+      });
+    }
     this.addCommand({
       id: 'toggle-hud',
       name: 'Toggle performance overlay',
@@ -333,10 +395,11 @@ export default class HandNotePlugin extends Plugin {
     return p;
   }
 
-  async createNote(name: string, context: TFile | null): Promise<TFile> {
+  async createNote(name: string, context: TFile | null, kind: 'note' | 'board' = 'note'): Promise<TFile> {
     const folder = this.targetFolder(context);
     await this.ensureFolder(folder);
     const path = this.uniquePath(folder, name);
+    if (kind === 'board') return this.app.vault.create(path, serializeDocument(createBoardDocument({ device: this.settings.deviceId })));
     const s = this.settings.editor;
     const paper = paperById(s.newPagePaper);
     const doc = createDocument({
@@ -439,9 +502,10 @@ export default class HandNotePlugin extends Plugin {
     }
   }
 
-  async createAndOpen(): Promise<void> {
+  async createAndOpen(kind: 'note' | 'board' = 'note'): Promise<void> {
     const stamp = formatStamp(new Date());
-    const file = await this.createNote(`HandNote ${stamp}`, null);
+    const file = await this.createNote(kind === 'board' ? `${t('boardNamePrefix')} ${stamp}` : `HandNote ${stamp}`, null, kind);
+    if (kind === 'board') new Notice(t('newBoardCreated'));
     await this.app.workspace.getLeaf('tab').openFile(file);
   }
 
@@ -458,6 +522,34 @@ export default class HandNotePlugin extends Plugin {
   // Export
   // ---------------------------------------------------------------------------------------------
 
+  /** Whiteboard: export what is on screen as PNG (2× the screen pixels). */
+  async exportView(view: HandNoteView): Promise<void> {
+    const doc = view.getDocument();
+    const file = view.file;
+    const ed = view.editor;
+    const page = doc?.pages[0];
+    if (!file || !ed || !page?.board) return;
+    const r = ed.viewRect;
+    const folder = file.parent?.path && file.parent.path !== '/' ? `${file.parent.path}/` : '';
+    let path = normalizePath(`${folder}${file.basename} view.png`);
+    let i = 2;
+    while (this.app.vault.getAbstractFileByPath(path)) path = normalizePath(`${folder}${file.basename} view (${i++}).png`);
+    const scale = Math.min(r.zoom * 2, BOARD_EXPORT_SIDE / Math.max(r.w, r.h), Math.sqrt(BOARD_EXPORT_PIXELS / (r.w * r.h)));
+    await preloadImages(page);
+    for (const f of page.board.frames) if (f.doc) await ensureDocPage(framePage(f), scale);
+    const canvas = document.createElement('canvas');
+    renderPageToCanvas(canvas, page, ed.cache ?? new GeometryCache(), scale, { x: r.x, y: r.y, w: r.w, h: r.h });
+    const blob: Blob | null = await new Promise((res) => canvas.toBlob(res, 'image/png'));
+    canvas.width = 0;
+    canvas.height = 0;
+    if (!blob) {
+      new Notice('HandNote: PNG export failed');
+      return;
+    }
+    await this.app.vault.createBinary(path, await blob.arrayBuffer());
+    new Notice(`Exported ${path}`);
+  }
+
   async exportPage(view: HandNoteView, kind: 'png' | 'svg', index?: number): Promise<void> {
     const doc = view.getDocument();
     const file = view.file;
@@ -466,17 +558,26 @@ export default class HandNotePlugin extends Plugin {
     const page = doc.pages[idx];
     if (!page) return;
     const folder = file.parent?.path && file.parent.path !== '/' ? `${file.parent.path}/` : '';
-    let path = normalizePath(`${folder}${file.basename} p${idx + 1}.${kind}`);
+    // a whiteboard is exported whole: no page number in the name
+    const stem = page.board ? file.basename : `${file.basename} p${idx + 1}`;
+    let path = normalizePath(`${folder}${stem}.${kind}`);
     let i = 2;
-    while (this.app.vault.getAbstractFileByPath(path)) path = normalizePath(`${folder}${file.basename} p${idx + 1} (${i++}).${kind}`);
+    while (this.app.vault.getAbstractFileByPath(path)) path = normalizePath(`${folder}${stem} (${i++}).${kind}`);
     const geo = view.editor.cache ?? new GeometryCache();
     if (kind === 'svg') {
       await this.app.vault.create(path, pageToSvg(page, geo));
     } else {
       const canvas = document.createElement('canvas');
       await preloadImages(page);
-      await ensureDocPage(page, 3);
-      renderPageToCanvas(canvas, page, geo, 3);
+      let scale = 3;
+      if (page.board) {
+        // whiteboard: the content bounds, as large as the device can draw (≤ 8192 px a side, 16 Mpx)
+        const box = pageRenderBox(page, geo);
+        scale = Math.min(3, BOARD_EXPORT_SIDE / Math.max(box.w, box.h), Math.sqrt(BOARD_EXPORT_PIXELS / (box.w * box.h)));
+        for (const f of page.board.frames) if (f.doc) await ensureDocPage(framePage(f), scale);
+        if (scale < 1) new Notice(t('exportScaled').replace('{p}', String(Math.max(1, Math.round(scale * 100)))));
+      } else await ensureDocPage(page, 3);
+      renderPageToCanvas(canvas, page, geo, scale);
       const blob: Blob | null = await new Promise((res) => canvas.toBlob(res, 'image/png'));
       canvas.width = 0;
       canvas.height = 0;
@@ -489,6 +590,10 @@ export default class HandNotePlugin extends Plugin {
     new Notice(`Exported ${path}`);
   }
 }
+
+/** Largest whiteboard PNG: a side and the pixel count iPad Safari can still draw into a canvas. */
+const BOARD_EXPORT_SIDE = 8192;
+const BOARD_EXPORT_PIXELS = 16e6;
 
 function formatStamp(d: Date): string {
   const p = (n: number) => (n < 10 ? '0' + n : String(n));
@@ -542,179 +647,135 @@ class HandNoteSettingTab extends PluginSettingTab {
       p.broadcastSettings(null);
     };
 
-    new Setting(containerEl).setName('New notes').setHeading();
+    // 0.12: the everyday settings first; recognition / AI and the rarely needed ones folded away
+    const section = (key: string) => new Setting(containerEl).setName(t(key)).setHeading();
+    const fold = (key: string, open = false): HTMLElement => {
+      const det = containerEl.createEl('details', { cls: 'hn-settings-fold' });
+      if (open) det.open = true;
+      det.createEl('summary', { text: t(key) });
+      return det;
+    };
+    const toggle = (el: HTMLElement, name: string, desc: string | null, get: () => boolean, set: (v: boolean) => void) => {
+      const st = new Setting(el).setName(t(name));
+      if (desc) st.setDesc(t(desc));
+      st.addToggle((tg) =>
+        tg.setValue(get()).onChange((v) => {
+          set(v);
+          save();
+        }),
+      );
+    };
+
+    section('set.notes');
     new Setting(containerEl)
-      .setName('Folder for new handwritten notes')
-      .setDesc('Leave empty to create them next to the active note. Avoid folders starting with "_" or "." — Remotely Save skips those by default.')
-      .addText((t) =>
-        t.setPlaceholder('e.g. Handwriting').setValue(s.newNoteFolder).onChange((v) => {
+      .setName(t('set.folder'))
+      .setDesc(t('set.folderDesc'))
+      .addText((tx) =>
+        tx.setPlaceholder('Handwriting').setValue(s.newNoteFolder).onChange((v) => {
           s.newNoteFolder = v.trim().replace(/^\/+|\/+$/g, '');
           save();
         }),
       );
-    new Setting(containerEl).setName('Paper size').addDropdown((d) => {
+    new Setting(containerEl).setName(t('set.paper')).addDropdown((d) => {
       for (const pp of PAPER_PRESETS) d.addOption(pp.id, pp.label);
       d.setValue(s.editor.newPagePaper).onChange((v) => {
         s.editor.newPagePaper = v;
         save();
       });
     });
-    new Setting(containerEl).setName('Page background').addDropdown((d) => {
-      for (const k of ['blank', 'ruled', 'grid', 'dots']) d.addOption(k, k[0].toUpperCase() + k.slice(1));
+    new Setting(containerEl).setName(t('set.background')).addDropdown((d) => {
+      for (const k of ['blank', 'ruled', 'grid', 'dots']) d.addOption(k, t(`set.bg.${k}`));
       d.setValue(s.editor.newPageBackground).onChange((v) => {
         s.editor.newPageBackground = v as BackgroundKind;
         save();
       });
     });
-
-    new Setting(containerEl).setName('Input').setHeading();
-    new Setting(containerEl)
-      .setName('Input mode on this device')
-      .setDesc('Auto picks Pen-first on iPad and Mouse-first on desktop. Stored only on this device, never in your notes.')
-      .addDropdown((d) =>
-        d
-          .addOption('auto', 'Auto')
-          .addOption('pen', 'Pen-first (Apple Pencil + fingers)')
-          .addOption('mouse', 'Mouse-first (mouse, trackpad, keyboard)')
-          .setValue(s.editor.inputMode)
-          .onChange((v) => {
-            s.editor.inputMode = v as 'auto' | 'pen' | 'mouse';
-            save();
-          }),
-      );
-    new Setting(containerEl)
-      .setName('Fountain pen variant')
-      .setDesc('A = v0.1 Baseline, B = Experimental pressure engine. Existing strokes keep the engine they were written with.')
-      .addDropdown((d) =>
-        d
-          .addOption('experimental', 'B · Experimental')
-          .addOption('baseline', 'A · v0.1 Baseline')
-          .setValue(s.editor.fountainVariant)
-          .onChange((v) => {
-            s.editor.fountainVariant = v === 'baseline' ? 'baseline' : 'experimental';
-            save();
-          }),
-      );
-    new Setting(containerEl)
-      .setName('Finger drawing')
-      .setDesc('Off (recommended on iPad): only Apple Pencil draws; fingers scroll and zoom; palms are ignored.')
-      .addToggle((t) =>
-        t.setValue(s.editor.fingerDrawing).onChange((v) => {
-          s.editor.fingerDrawing = v;
-          save();
-        }),
-      );
-    new Setting(containerEl)
-      .setName('Two-finger tap to undo, three-finger tap to redo')
-      .addToggle((t) =>
-        t.setValue(s.editor.tapGestures).onChange((v) => {
-          s.editor.tapGestures = v;
-          save();
-        }),
-      );
-    new Setting(containerEl)
-      .setName(t('fingerDoubleTap'))
-      .setDesc(t('fingerDoubleTapDesc'))
-      .addToggle((tg) =>
-        tg.setValue(s.editor.fingerDoubleTapEraser).onChange((v) => {
-          s.editor.fingerDoubleTapEraser = v;
-          save();
-        }),
-      );
-    new Setting(containerEl)
-      .setName('Predicted ink (experimental)')
-      .setDesc('Extends the live stroke with the browser\'s predicted pointer positions when available. Never saved. Compare on and off on your iPad.')
-      .addToggle((t) =>
-        t.setValue(s.editor.usePrediction).onChange((v) => {
-          s.editor.usePrediction = v;
-          save();
-        }),
-      );
-    new Setting(containerEl)
-      .setName('Eraser size (screen pixels)')
-      .addSlider((sl) =>
-        sl
-          .setLimits(4, 40, 1)
-          .setValue(s.editor.eraserRadius)
-          .setDynamicTooltip()
-          .onChange((v) => {
-            s.editor.eraserRadius = v;
-            save();
-          }),
-      );
-    new Setting(containerEl)
-      .setName('Performance overlay')
-      .setDesc('Shows input interval, processing and render times. These are not pen-to-screen latency.')
-      .addToggle((t) =>
-        t.setValue(s.editor.showHud).onChange((v) => {
-          s.editor.showHud = v;
-          save();
-        }),
-      );
-
-    new Setting(containerEl)
-      .setName('Collect input diagnostics')
-      .setDesc('Records pressure, sampling and touch sizes locally to calibrate the pens. Copy the report from the editor ⋯ menu. Nothing is uploaded.')
-      .addToggle((t) =>
-        t.setValue(s.editor.diagnostics).onChange((v) => {
-          s.editor.diagnostics = v;
-          save();
-        }),
-      );
-
-    new Setting(containerEl).setName('Paper').setHeading();
-    new Setting(containerEl).setName('Paper tone for new notes').addDropdown((d) =>
+    new Setting(containerEl).setName(t('set.tone')).addDropdown((d) =>
       d
-        .addOption('white', 'White')
-        .addOption('cream', 'Cream')
-        .addOption('yellow', 'Pale yellow')
+        .addOption('white', t('set.tone.white'))
+        .addOption('cream', t('set.tone.cream'))
+        .addOption('yellow', t('set.tone.yellow'))
         .setValue(s.editor.newPaperTone)
         .onChange((v) => {
           s.editor.newPaperTone = v as 'white' | 'cream' | 'yellow';
           save();
         }),
     );
-    new Setting(containerEl)
-      .setName('Paper grain')
-      .setDesc('A very light texture on screen. Exports stay clean.')
-      .addToggle((t) =>
-        t.setValue(s.editor.paperTexture).onChange((v) => {
-          s.editor.paperTexture = v;
-          save();
-        }),
-      );
+    toggle(containerEl, 'autoAddPage', 'autoAddPageDesc', () => s.editor.pullToAddPage, (v) => (s.editor.pullToAddPage = v));
 
-    new Setting(containerEl).setName('Imported documents').setHeading();
+    section('set.writing');
     new Setting(containerEl)
-      .setName('Folder for imported originals')
-      .setDesc('A document picked from this device is kept once in this folder: the note stores only a reference to it and your annotations, never the file itself. Empty: the attachment location set in Obsidian. Files annotated where they already are in the vault are not copied.')
-      .addText((t) =>
-        t
-          .setValue(s.importFolder)
+      .setName(t('set.inputMode'))
+      .setDesc(t('set.inputModeDesc'))
+      .addDropdown((d) =>
+        d
+          .addOption('auto', t('set.inputMode.auto'))
+          .addOption('pen', t('set.inputMode.pen'))
+          .addOption('mouse', t('set.inputMode.mouse'))
+          .setValue(s.editor.inputMode)
           .onChange((v) => {
-            s.importFolder = v.trim().replace(/^\/+|\/+$/g, '');
+            s.editor.inputMode = v as 'auto' | 'pen' | 'mouse';
             save();
           }),
       );
+    toggle(containerEl, 'set.finger', 'set.fingerDesc', () => s.editor.fingerDrawing, (v) => (s.editor.fingerDrawing = v));
+    toggle(containerEl, 'set.tapGestures', null, () => s.editor.tapGestures, (v) => (s.editor.tapGestures = v));
+    toggle(containerEl, 'fingerDoubleTap', 'fingerDoubleTapDesc', () => s.editor.fingerDoubleTapEraser, (v) => (s.editor.fingerDoubleTapEraser = v));
+    toggle(containerEl, 'highlighterStraight', 'set.highlighterDesc', () => s.editor.highlighterStraight, (v) => (s.editor.highlighterStraight = v));
+    new Setting(containerEl).setName(t('set.eraser')).addSlider((sl) =>
+      sl
+        .setLimits(4, 40, 1)
+        .setValue(s.editor.eraserRadius)
+        .setDynamicTooltip()
+        .onChange((v) => {
+          s.editor.eraserRadius = v;
+          save();
+        }),
+    );
 
-    new Setting(containerEl).setName('Images').setHeading();
+    section('set.files');
     new Setting(containerEl)
-      .setName('Store inserted images')
-      .setDesc('Inside the .handnote file (one file to sync; large images are downscaled to 2048 px) or as attachments in the vault. Existing notes are never converted automatically — use the command "Embed attachment images into the current handwritten note".')
+      .setName(t('set.images'))
+      .setDesc(t('set.imagesDesc'))
       .addDropdown((d) =>
         d
-          .addOption('embed', 'Inside the handwritten note')
-          .addOption('attachment', 'As vault attachments')
+          .addOption('embed', t('set.images.embed'))
+          .addOption('attachment', t('set.images.attachment'))
           .setValue(s.editor.imageStorage)
           .onChange((v) => {
             s.editor.imageStorage = v === 'attachment' ? 'attachment' : 'embed';
             save();
           }),
       );
+    new Setting(containerEl)
+      .setName(t('set.importFolder'))
+      .setDesc(t('set.importFolderDesc'))
+      .addText((tx) =>
+        tx.setValue(s.importFolder).onChange((v) => {
+          s.importFolder = v.trim().replace(/^\/+|\/+$/g, '');
+          save();
+        }),
+      );
+    new Setting(containerEl)
+      .setName(t('set.embedPages'))
+      .setDesc(t('set.embedPagesDesc'))
+      .addSlider((sl) =>
+        sl
+          .setLimits(0, 10, 1)
+          .setValue(s.embedMaxPages)
+          .setDynamicTooltip()
+          .onChange((v) => {
+            s.embedMaxPages = v;
+            save();
+          }),
+      );
+    toggle(containerEl, 'set.embedTab', null, () => s.embedOpensNewTab, (v) => (s.embedOpensNewTab = v));
 
+    // recognition, on-device packs and AI: configured once, folded away
+    const aiFold = fold('set.recognition');
     // The AI section re-renders on its own (adding a provider, switching a model …): re-rendering
     // the whole tab used to jump the page back to the top on every toggle.
-    const aiSection = containerEl.createDiv({ cls: 'hn-ai-section' });
+    const aiSection = aiFold.createDiv({ cls: 'hn-ai-section' });
     const renderAI = () => {
       const scroller = containerEl;
       const top = scroller.scrollTop;
@@ -752,31 +813,28 @@ class HandNoteSettingTab extends PluginSettingTab {
     };
     renderAI();
 
-    new Setting(containerEl).setName('Embeds').setHeading();
-    new Setting(containerEl)
-      .setName('Pages shown in a Markdown embed')
-      .setDesc('0 = all pages')
-      .addSlider((sl) =>
-        sl
-          .setLimits(0, 10, 1)
-          .setValue(s.embedMaxPages)
-          .setDynamicTooltip()
+    // rarely needed: engine comparison, experiments, diagnostics, safety
+    const adv = fold('set.advanced');
+    new Setting(adv)
+      .setName(t('set.fountainVariant'))
+      .setDesc(t('set.fountainVariantDesc'))
+      .addDropdown((d) =>
+        d
+          .addOption('experimental', 'B')
+          .addOption('baseline', 'A · v0.1')
+          .setValue(s.editor.fountainVariant)
           .onChange((v) => {
-            s.embedMaxPages = v;
+            s.editor.fountainVariant = v === 'baseline' ? 'baseline' : 'experimental';
             save();
           }),
       );
-    new Setting(containerEl).setName('Open embeds in a new tab').addToggle((t) =>
-      t.setValue(s.embedOpensNewTab).onChange((v) => {
-        s.embedOpensNewTab = v;
-        save();
-      }),
-    );
-
-    new Setting(containerEl).setName('Safety').setHeading();
-    new Setting(containerEl)
-      .setName('Local backups per note')
-      .setDesc('Before HandNote first overwrites a note in a session, the previous version is copied to the plugin folder on this device (not synced).')
+    toggle(adv, 'set.prediction', 'set.predictionDesc', () => s.editor.usePrediction, (v) => (s.editor.usePrediction = v));
+    toggle(adv, 'set.grain', 'set.grainDesc', () => s.editor.paperTexture, (v) => (s.editor.paperTexture = v));
+    toggle(adv, 'set.hud', 'set.hudDesc', () => s.editor.showHud, (v) => (s.editor.showHud = v));
+    toggle(adv, 'set.diagnostics', 'set.diagnosticsDesc', () => s.editor.diagnostics, (v) => (s.editor.diagnostics = v));
+    new Setting(adv)
+      .setName(t('set.backups'))
+      .setDesc(t('set.backupsDesc'))
       .addSlider((sl) =>
         sl
           .setLimits(1, 20, 1)
@@ -787,18 +845,18 @@ class HandNoteSettingTab extends PluginSettingTab {
             save();
           }),
       );
-    new Setting(containerEl)
-      .setName('Reset pen settings')
-      .setDesc('Restore default width, pressure, smoothing and tapering for all pens.')
+    new Setting(adv)
+      .setName(t('set.resetPens'))
+      .setDesc(t('set.resetPensDesc'))
       .addButton((b) =>
-        b.setButtonText('Reset').onClick(() => {
+        b.setButtonText(t('set.reset')).onClick(() => {
           const d = defaultEditorSettings();
           s.editor.pens = d.pens;
           save();
-          new Notice('HandNote pen settings reset');
+          new Notice(t('set.resetDone'));
         }),
       );
-    new Setting(containerEl).setName('Device id').setDesc(`${s.deviceId} — written into each saved revision to identify sync conflicts.`);
+    new Setting(adv).setName(t('set.deviceId')).setDesc(`${s.deviceId} — ${t('set.deviceIdDesc')}`);
   }
 }
 
