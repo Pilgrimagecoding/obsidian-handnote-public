@@ -1,6 +1,6 @@
 import type { InputSample } from './types';
 import { newId, type StoredGeometry, type Stroke } from '../document/model';
-import { COMMIT_TAPER, COMMIT_TAPER_DEPTH, INK_PIPELINE, buildStrokeGeometry, quantizeGeometry, simplifyGeometry } from './stroke-builder';
+import { INK_PIPELINE, buildStrokeGeometry, quantizeGeometry, simplifyGeometry } from './stroke-builder';
 
 /**
  * Partial eraser: cut the raw samples of a stroke where an eraser capsule (segment a→b with
@@ -107,8 +107,8 @@ function arcLength(s: InputSample[]): number {
  */
 export function fragmentGeometry(frag: Stroke): StoredGeometry {
   const cut = frag.cut ?? 0;
-  const params = { ...frag.params, tapering: frag.params.tapering * COMMIT_TAPER };
-  return quantizeGeometry(simplifyGeometry(buildStrokeGeometry(frag.samples, frag.tool, params, { zoom: frag.zoom, hasPressure: frag.hasPressure, engine: frag.engine, cutStart: (cut & 1) !== 0, cutEnd: (cut & 2) !== 0, ink: INK_PIPELINE }, COMMIT_TAPER_DEPTH)));
+  const params = frag.params;
+  return quantizeGeometry(simplifyGeometry(buildStrokeGeometry(frag.samples, frag.tool, params, { zoom: frag.zoom, hasPressure: frag.hasPressure, engine: frag.engine, cutStart: (cut & 1) !== 0, cutEnd: (cut & 2) !== 0, ink: INK_PIPELINE }, 1)));
 }
 
 /** Cut one stroke. Returns null when untouched, otherwise the fragments (possibly none). */

@@ -1611,11 +1611,85 @@
   touch-action: none;
 }
 .hn-ps-cell {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 4px;
   min-width: 0;
+}
+/* 0.11.1: bookmark flag on the thumbnail (GoodNotes-like), red when the page is bookmarked */
+.hn-editor button.hn-ps-flag {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  z-index: 1;
+  width: 30px;
+  height: 30px;
+  min-height: 0;
+  padding: 3px 3px 0 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: #8e949b;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.hn-ps-flag .hn-icon {
+  width: 17px;
+  height: 17px;
+  filter: drop-shadow(0 0 1.5px rgba(255, 255, 255, 0.9));
+}
+.hn-editor button.hn-ps-flag.is-on {
+  color: #e5484d;
+}
+.hn-editor button.hn-ps-flag:disabled {
+  cursor: default;
+  opacity: 1;
+}
+.hn-ps-ghost .hn-ps-flag {
+  display: none;
+}
+.hn-ps-filter {
+  flex: 0 0 auto;
+  padding: 0 12px 8px;
+}
+.hn-ps-filter.is-hidden {
+  display: none;
+}
+.hn-editor button.hn-ps-filter-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 30px;
+  min-height: 0;
+  padding: 0 10px 0 12px;
+  border: none;
+  border-radius: 15px;
+  background: color-mix(in srgb, var(--hn-accent) 16%, transparent);
+  box-shadow: none;
+  color: var(--hn-accent);
+  font-size: 14px;
+  cursor: pointer;
+}
+.hn-ps-filter-chev .hn-icon {
+  width: 14px;
+  height: 14px;
+}
+.hn-ps-filter-menu {
+  min-width: 170px;
+}
+.hn-ps-empty {
+  grid-column: 1 / -1;
+  padding: 24px 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--hn-muted);
+  text-align: center;
 }
 .hn-ps-box {
   box-sizing: border-box;
@@ -2685,4 +2759,7 @@ textarea.hn-input {
   font-weight: var(--font-semibold);
   font-size: var(--font-ui-medium);
   padding: 6px 0;
+}
+.hn-list-row.is-bookmarked .hn-row-icon {
+  color: #e5484d;
 }

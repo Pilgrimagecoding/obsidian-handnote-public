@@ -83,6 +83,14 @@ export const ZH12: Record<string, string> = {
   "set.resetDone": "笔的设置已重置",
   "set.deviceId": "设备 ID",
   "set.deviceIdDesc": "写进每次保存，用来识别同步冲突。",
+  addBookmark: '添加到收藏夹',
+  removeBookmark: '从收藏夹中移除',
+  allPages: '所有页面',
+  bookmarksOnly: '仅书签',
+  bookmarksEmpty: '还没有收藏的页面。点缩略图右上角的书签，或在「更多」里选「添加到收藏夹」。',
+  bookmarkAdded: '已添加到收藏夹',
+  bookmarkRemoved: '已从收藏夹中移除',
+  'cmd.toggleBookmark': '收藏 / 取消收藏当前页',
 };
 
 export const EN12: Record<string, string> = {
@@ -169,4 +177,12 @@ export const EN12: Record<string, string> = {
   "set.resetDone": "HandNote pen settings reset",
   "set.deviceId": "Device id",
   "set.deviceIdDesc": "written into each saved revision to identify sync conflicts.",
+  addBookmark: 'Add to favorites',
+  removeBookmark: 'Remove from favorites',
+  allPages: 'All pages',
+  bookmarksOnly: 'Bookmarks only',
+  bookmarksEmpty: 'No bookmarked pages yet. Tap the bookmark at the top right of a thumbnail, or choose "Add to favorites" under More.',
+  bookmarkAdded: 'Added to favorites',
+  bookmarkRemoved: 'Removed from favorites',
+  'cmd.toggleBookmark': 'Bookmark / unbookmark the current page',
 };

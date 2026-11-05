@@ -75,6 +75,11 @@ export interface PenParams {
    * 0.2.0-beta.1 used, so strokes saved without this field keep their exact geometry.
    */
   heavyPressure?: number;
+  /**
+   * 0..1 (0.12 ink): how much a tilted Pencil widens the stroke, like a real pen laid over:
+   * width × (1 + tiltSensitivity × tilt / 90°). Missing = 0.4; 0 = tilt ignored.
+   */
+  tiltSensitivity?: number;
 }
 
 export interface PenState {

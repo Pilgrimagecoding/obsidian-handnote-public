@@ -31,14 +31,14 @@ export function expAlpha(step: number, len: number): number {
  * light-pressure range responsive (small characters written lightly still get modulation), and a
  * soft ceiling stops heavy pressure from bloating the line.
  */
-export function pressureMultiplier(p: number, sensitivity: number, typical = 0.3): number {
+export function pressureMultiplier(p: number, sensitivity: number, typical = 0.3, floor = 0.28): number {
   if (sensitivity <= 0) return 1;
   const gamma = 0.65;
   const pc = clamp(p, 0, 1);
   const ratio = Math.pow(Math.max(pc, 0.001), gamma) / Math.pow(typical, gamma);
   const ceil = 2.2;
   const soft = ratio > 1 ? 1 + (ceil - 1) * Math.tanh((ratio - 1) / (ceil - 1)) : ratio;
-  return clamp(1 + sensitivity * (soft - 1), 0.28, 2.1);
+  return clamp(1 + sensitivity * (soft - 1), floor, 2.1);
 }
 
 export const PRESSURE_CURVES = ['gamma', 'linear', 'smoothstep', 'piecewise'] as const;

@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.11.1 — 2026-11-05
+
+Built from the same sources as the private test builds 0.11.1-beta.2 … beta.6, public edition.
+Release notes: `docs/release-notes/0.11.1.md`.
+
+- **Re-delivered Pencil samples dropped** (ink 2): a sample exactly on one of the two samples before
+  the last one, or an exact copy of the last one, is ignored (`isRedelivered`). iPadOS repeats the
+  previous frame's coalesced samples with a newer timestamp (a, b, a, b), which drew segmented edges.
+- **Exit taper again** (`taperEnd`): the round end is sharpened within its own reach (extension by
+  R × (1 − end width), taper over ≥ 3.5 R); end width from the exit speed and weakened by a natural
+  pressure release; entry taper from 30 %; pencil / ballpoint floor 0.05; engine-1 release 8 ms.
+- Width smoothing `(0.5 + 0.8 w)`, scaled up for light pressure; median-of-5 pressure; centerline
+  sigma grows with lightness. Outline sides drawn as quadratic Béziers through the midpoints
+  (`PathSink.quadTo`, SVG `Q`).
+- **Tilt** (`tx`, `ty` through filtering, smoothing and the spline): width × (1 + s × angle / 90°),
+  `PenParams.tiltSensitivity` (default 0.4, slider).
+- Typical pressure: engine-1 pens use `typicalPressure` (calibrated, default 0.12) instead of 0.3;
+  calibration from a rolling buffer of 2000 Pencil pressures, applied to every pressure pen.
+- **Page bookmarks**: `Page.bookmark` (header field `bookmark: true`, format version unchanged; not
+  an undo step); flag on each thumbnail, *Add to favorites* in the ⋯ and per-page menus, command
+  `toggle-bookmark`; page sidebar filter *All pages / Bookmarks only* (no reorder while filtered).
+
 ## 0.11.0 — 2026-11-05
 
 Built from the same sources as the private test builds 0.10.0-beta.1 and 0.11.0-beta.1 … beta.5

@@ -271,6 +271,7 @@ export default class HandNotePlugin extends Plugin {
       ['fitPage', (e) => e.fitPage()],
       ['pages', (e) => e.openPagesPanel()],
       ['contents', (e) => e.openContents()],
+      ['toggleBookmark', (e) => e.toggleBookmark(e.currentPageIndex(), true), 'pages'],
       ['convertBoard', (e) => void e.convertToBoard(), 'pages'],
       ['fitContent', (e) => e.fitContent(), 'board'],
       ['prevFrame', (e) => e.stepFrame(-1), 'board'],

@@ -161,6 +161,12 @@ export interface Page {
    * page; `background` is the board's own texture, painted over the whole canvas.
    */
   board?: Board;
+  /**
+   * Bookmarked ("added to favourites", 0.11.1): shown with a red flag in the page navigator, which
+   * can list only bookmarked pages. Written as `bookmark: true` on the page header line only when
+   * set; older plugins ignore it. Not an undo step. Never set on a whiteboard.
+   */
+  bookmark?: boolean;
   strokes: Stroke[];
   /** Text boxes, images and shapes (format v3). Painted: images, shapes, ink, then text. */
   items: Item[];

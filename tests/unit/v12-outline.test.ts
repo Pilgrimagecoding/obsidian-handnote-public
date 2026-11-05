@@ -21,6 +21,13 @@ class PolySink implements PathSink {
     const n = Math.max(1, Math.ceil((a1 - a0) / (Math.PI / 90)));
     for (let i = 0; i <= n; i++) this.cur.push([cx + r * Math.cos(a0 + ((a1 - a0) * i) / n), cy + r * Math.sin(a0 + ((a1 - a0) * i) / n)]);
   }
+  quadTo(cx: number, cy: number, x: number, y: number): void {
+    const [x0, y0] = this.cur[this.cur.length - 1];
+    for (let i = 1; i <= 8; i++) {
+      const t = i / 8;
+      this.cur.push([(1 - t) * (1 - t) * x0 + 2 * (1 - t) * t * cx + t * t * x, (1 - t) * (1 - t) * y0 + 2 * (1 - t) * t * cy + t * t * y]);
+    }
+  }
   closePath(): void {}
   winding(x: number, y: number): number {
     let w = 0;

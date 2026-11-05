@@ -41,6 +41,8 @@ const P: Record<string, string> = {
   share: '<path d="M12 3.5v11"/><path d="M8 7.5l4-4 4 4"/><path d="M7.5 10.5H6a1.5 1.5 0 00-1.5 1.5v7A1.5 1.5 0 006 20.5h12a1.5 1.5 0 001.5-1.5v-7a1.5 1.5 0 00-1.5-1.5h-1.5"/>',
   edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/>',
   check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+  bookmark: '<path d="M7.2 3.5h9.6a1 1 0 011 1v16l-5.8-4.1-5.8 4.1v-16a1 1 0 011-1z"/>',
+  'bookmark-fill': '<path d="M7.2 3.5h9.6a1 1 0 011 1v16l-5.8-4.1-5.8 4.1v-16a1 1 0 011-1z" fill="currentColor"/>',
   close: '<path d="M6 6l12 12M18 6L6 18"/>',
   line: '<path d="M5 19L19 5"/>',
   arrow: '<path d="M5 19L19 5"/><path d="M10 5h9v9"/>',

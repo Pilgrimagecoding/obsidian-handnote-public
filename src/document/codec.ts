@@ -313,7 +313,7 @@ function pageHeaderJson(page: Page): Record<string, unknown> {
       },
     };
   }
-  return { id: page.id, width: page.width, height: page.height, background: page.background, ...(page.doc ? { doc: { src: page.doc.src, n: page.doc.n } } : {}) };
+  return { id: page.id, width: page.width, height: page.height, background: page.background, ...(page.doc ? { doc: { src: page.doc.src, n: page.doc.n } } : {}), ...(page.bookmark ? { bookmark: true } : {}) };
 }
 
 export function serializeDocument(doc: HandNoteDocument): string {
@@ -662,6 +662,7 @@ function validatePageHeader(o: unknown): Page | null {
     background: validateBackground(r.background),
     ...(doc ? { doc } : {}),
     ...(board ? { board } : {}),
+    ...(r.bookmark === true && !board ? { bookmark: true } : {}),
     strokes: [],
     items: [],
   };

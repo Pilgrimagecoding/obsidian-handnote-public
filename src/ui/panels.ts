@@ -9,7 +9,7 @@ import { stepSlider } from './slider';
 import { onTap } from './tap';
 import { colorSwatch } from './toolbar';
 import type { InputMode, InputModeSetting } from '../input/input-mode';
-import { INK_PIPELINE, StrokeBuilder } from '../ink/stroke-builder';
+import { DEFAULT_TILT_SENSITIVITY, INK_PIPELINE, StrokeBuilder, TYPICAL_PRESSURE_V12 } from '../ink/stroke-builder';
 import { CanvasPathSink, emitStroke } from '../ink/outline';
 import { pencilFill } from '../rendering/items-paint';
 import { el } from './dom';
@@ -213,6 +213,7 @@ export function renderPenPanel(host: HTMLElement, m: PenPanelModel): void {
   if (!hl) {
     slider(main, t('tipSharpness'), p.tapering, 0, 1, 0.05, (v) => set('tapering', v), pct);
     slider(main, t('pressureSensitivity'), p.pressureSensitivity, 0, 1, 0.05, (v) => set('pressureSensitivity', v), pct);
+    slider(main, t('tiltSensitivity'), p.tiltSensitivity ?? DEFAULT_TILT_SENSITIVITY, 0, 1, 0.05, (v) => set('tiltSensitivity', v), pct);
   } else {
     slider(main, t('opacity'), p.opacity, 0.1, 0.8, 0.05, (v) => set('opacity', v), pct);
   }
@@ -233,7 +234,8 @@ export function renderPenPanel(host: HTMLElement, m: PenPanelModel): void {
       (v) => m.onVariant(v),
     );
   }
-  if (m.engine === 2) {
+  // pressure calibration (0.12: every pen with pressure; from the writing of this session)
+  {
     const cal = el('div', 'hn-row hn-cal-row', adv);
     const ms = m.measured;
     const btn = actionButton(cal, ms ? `${t('calibrate')} (${ms.typical.toFixed(2)} / ${ms.heavy.toFixed(2)})` : t('calibrate'), () => {
@@ -246,6 +248,11 @@ export function renderPenPanel(host: HTMLElement, m: PenPanelModel): void {
     btn.classList.add('hn-calibrate');
     btn.disabled = !ms;
     if (!ms) el('div', 'hn-row-hint', cal, t('calibrateHint'));
+    if (m.engine !== 2) {
+      slider(adv, t('typicalPressure'), p.typicalPressure ?? TYPICAL_PRESSURE_V12, 0.03, 0.8, 0.01, (v) => set('typicalPressure', v), fmt2);
+    }
+  }
+  if (m.engine === 2) {
     const cr = el('div', 'hn-row hn-select-row', adv);
     el('span', 'hn-row-label', cr, t('pressureCurve'));
     const sel = el('select', 'hn-select dropdown', cr);
@@ -545,6 +552,9 @@ export interface MoreMenuModel {
   canDeletePage: boolean;
   readOnly: boolean;
   actions: { label: string; run: () => void }[];
+  /** 0.11.1: the current page is bookmarked ("Add to favorites" / "Remove from favorites"). */
+  bookmarked?: boolean;
+  onBookmark?: () => void;
   onAddPage: () => void;
   onDeletePage: () => void;
   onClearPage(): void;
@@ -570,6 +580,10 @@ export function renderMoreMenu(host: HTMLElement, m: MoreMenuModel): void {
     fn();
     m.close();
   };
+  if (!m.board && m.onBookmark) {
+    const row = listRow(card, m.bookmarked ? 'bookmark-fill' : 'bookmark', m.bookmarked ? t('removeBookmark') : t('addBookmark'), run(m.onBookmark), { disabled: m.readOnly });
+    if (m.bookmarked) row.classList.add('is-bookmarked');
+  }
   if (!m.board) listRow(card, 'page-add', t('addPage'), run(m.onAddPage), { disabled: m.readOnly });
   listRow(card, 'template', t('changeTemplate'), () => m.onTemplate(), { disabled: m.readOnly, chevron: true });
   if (m.board) listRow(card, 'fit-page', t('showAll'), run(m.onFitPage));

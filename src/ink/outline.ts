@@ -17,6 +17,8 @@ export interface PathSink {
   lineTo(x: number, y: number): void;
   /** Arc around (cx, cy) from angle a0 to a1 (a1 >= a0), increasing angle (clockwise in y-down space). */
   arc(cx: number, cy: number, r: number, a0: number, a1: number): void;
+  /** Quadratic Bézier from the current point through control (cx, cy) to (x, y) (0.12). */
+  quadTo(cx: number, cy: number, x: number, y: number): void;
   closePath(): void;
 }
 
@@ -183,16 +185,39 @@ function emitOffsetPiece(
   // same winding as emitCapsule: start on the +lean side, round the back, along the −lean side
   sink.moveTo(xs[ia] + rs[ia] * Math.cos(th[a] + al[a]), ys[ia] + rs[ia] * Math.sin(th[a] + al[a]));
   sink.arc(xs[ia], ys[ia], rs[ia], th[a] + al[a], th[a] + TWO_PI - al[a]);
-  for (let k = a + 1; k <= b; k++) {
+  const side = (k: number, sgn: number): [number, number] => {
     const i = idx[k];
-    sink.lineTo(xs[i] + rs[i] * Math.cos(th[k] - al[k]), ys[i] + rs[i] * Math.sin(th[k] - al[k]));
-  }
+    return [xs[i] + rs[i] * Math.cos(th[k] + sgn * al[k]), ys[i] + rs[i] * Math.sin(th[k] + sgn * al[k])];
+  };
+  smoothSide(sink, a, b, (k) => side(k, -1));
   sink.arc(xs[ib], ys[ib], rs[ib], th[b] - al[b], th[b] + al[b]);
-  for (let k = b - 1; k >= a; k--) {
-    const i = idx[k];
-    sink.lineTo(xs[i] + rs[i] * Math.cos(th[k] + al[k]), ys[i] + rs[i] * Math.sin(th[k] + al[k]));
-  }
+  smoothSide(sink, b, a, (k) => side(k, 1));
   sink.closePath();
+}
+
+/**
+ * One side of a piece, from outline point `from` (the current point) to `to`, as a curve: each
+ * point is the control of a quadratic Bézier between the midpoints of its two segments (0.12).
+ * The edge has no corners at the points (it used to be straight segments); it stays within a
+ * fraction of the point spacing of them and ends exactly on the end point.
+ */
+function smoothSide(sink: PathSink, from: number, to: number, pt: (k: number) => [number, number]): void {
+  const dir = to > from ? 1 : -1;
+  const n = Math.abs(to - from);
+  if (n === 1) {
+    const [x, y] = pt(to);
+    sink.lineTo(x, y);
+    return;
+  }
+  let [px, py] = pt(from + dir);
+  let [qx, qy] = pt(from);
+  sink.lineTo((qx + px) / 2, (qy + py) / 2);
+  for (let k = from + dir; k !== to; k += dir) {
+    [qx, qy] = [px, py];
+    [px, py] = pt(k + dir);
+    if (k + dir === to) sink.quadTo(qx, qy, px, py);
+    else sink.quadTo(qx, qy, (qx + px) / 2, (qy + py) / 2);
+  }
 }
 
 export function emitGeometry(sink: PathSink, g: StrokeGeometry): void {
@@ -211,6 +236,9 @@ export class CanvasPathSink implements PathSink {
   arc(cx: number, cy: number, r: number, a0: number, a1: number): void {
     this.p.arc(cx, cy, r, a0, a1, false);
   }
+  quadTo(cx: number, cy: number, x: number, y: number): void {
+    this.p.quadraticCurveTo(cx, cy, x, y);
+  }
   closePath(): void {
     this.p.closePath();
   }
@@ -228,6 +256,9 @@ export class SvgPathSink implements PathSink {
   }
   lineTo(x: number, y: number): void {
     this.parts.push(`L${this.f(x)} ${this.f(y)}`);
+  }
+  quadTo(cx: number, cy: number, x: number, y: number): void {
+    this.parts.push(`Q${this.f(cx)} ${this.f(cy)} ${this.f(x)} ${this.f(y)}`);
   }
   arc(cx: number, cy: number, r: number, a0: number, a1: number): void {
     const span = a1 - a0;
@@ -267,6 +298,9 @@ export class CountingSink implements PathSink {
     this.ops++;
   }
   arc(): void {
+    this.ops++;
+  }
+  quadTo(): void {
     this.ops++;
   }
   closePath(): void {

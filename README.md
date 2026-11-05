@@ -25,8 +25,9 @@ document import and a voice-over is [on YouTube](https://www.youtube.com/watch?v
 ## Write like on paper
 
 Pressure-sensitive fountain pen, pencil, highlighter, dashed strokes and a laser pointer. The ink
-is smoothed without lagging behind the pen and stays exactly where you wrote it when you lift the
-pen; zoom in up to 2400 %. The shape pen turns casual strokes into lines, arrows, curves,
+is smoothed without lagging behind the pen, ends in a pointed stroke when you flick, widens when you
+tilt the Apple Pencil and stays exactly where you wrote it when you lift the pen; zoom in up to
+2400 %. Calibrate the pressure from your own writing in one tap. The shape pen turns casual strokes into lines, arrows, curves,
 rectangles, ellipses (also tilted), triangles and regular polygons, and a nearly straight
 highlighter stroke becomes a straight line. Pages come in A4, A5, A3 or Letter with blank, ruled,
 grid or dotted paper.
@@ -73,7 +74,8 @@ keys; this plugin has no on-device math recognition.
 
 ## Pages, paper and objects
 
-Many pages per note, reordered in the page sidebar. Text boxes, images, shapes with connectors and
+Many pages per note, reordered in the page sidebar; bookmark the pages you need often and list
+only those. Text boxes, images, shapes with connectors and
 editable formulas sit on the page with your ink; the lasso moves, resizes, rotates, recolours and
 groups any of them. Long-press the page with a finger (right-click on desktop) to paste, add a text
 box or insert an image right there.
@@ -122,7 +124,7 @@ release notes, and releases carry GitHub build-provenance attestations.
 
 | Platform | Status |
 |---|---|
-| iPad (Obsidian for iPadOS) with Apple Pencil | Primary target: pressure, palm rejection, finger pan / pinch, two-finger undo |
+| iPad (Obsidian for iPadOS) with Apple Pencil | Primary target: pressure, tilt, palm rejection, finger pan / pinch, two-finger undo |
 | Windows / macOS / Linux | Mouse, pen tablet, touch screen, keyboard shortcuts |
 | iPhone / Android | Should work (no desktop-only APIs are used) but is not tested |
 

@@ -42,6 +42,9 @@ interface FPoint {
   p: number; // smoothed pressure
   v: number; // smoothed speed, screen px / ms
   t: number;
+  /** Pencil tilt (degrees, PointerEvent tiltX / tiltY), carried from the raw samples (0.12). */
+  tx?: number;
+  ty?: number;
 }
 
 interface WidthState {
@@ -93,6 +96,8 @@ export class StrokeBuilder {
   private ps = 0.25; // smoothed pressure
   private vs = 0; // smoothed speed
   private hasFilter = false;
+  /** Latest raw pressures (0.12 ink: median filter against dropouts). */
+  private pHist: number[] = [];
   /** 0.12 ink pipeline (see StrokeContext.ink). */
   private readonly v12: boolean;
   /** Sample the spline at MAX_SPLINE_STEP (the stored ink), not per screen pixel. */
@@ -143,6 +148,7 @@ export class StrokeBuilder {
   // ---------------------------------------------------------------------------------------------
 
   add(sample: InputSample): void {
+    if (this.v12 && isRedelivered(this.raw, sample)) return;
     const z = this.ctx.zoom;
     let t = sample.t;
     if (this.raw.length > 0) {
@@ -154,7 +160,14 @@ export class StrokeBuilder {
 
     const sx = s.x * z;
     const sy = s.y * z;
-    const rawP = this.ctx.hasPressure ? clamp(s.p, 0, 1) : -1;
+    let rawP = this.ctx.hasPressure ? clamp(s.p, 0, 1) : -1;
+    if (this.v12 && rawP >= 0) {
+      // median of the last 5 pressures: a light touch drops out for a sample now and then (the
+      // tip barely touches the glass) — those dips were width dents along light strokes
+      this.pHist.push(rawP);
+      if (this.pHist.length > 5) this.pHist.shift();
+      if (this.pHist.length >= 3) rawP = [...this.pHist].sort((a, b) => a - b)[this.pHist.length >> 1];
+    }
 
     if (!this.hasFilter) {
       this.hasFilter = true;
@@ -167,7 +180,7 @@ export class StrokeBuilder {
       this.vs = 0;
       this.dirAnchorX = sx;
       this.dirAnchorY = sy;
-      this.filtered.push({ x: s.x, y: s.y, p: this.pressureValue(), v: 0, t });
+      this.filtered.push({ x: s.x, y: s.y, p: this.pressureValue(), v: 0, t, ...tiltOf(s) });
       this.arc.push(0);
       this.emitStable();
       return;
@@ -228,7 +241,8 @@ export class StrokeBuilder {
         this.filterPressureV2(rawP, dtMs);
       } else {
         // engine 1 — pressure: asymmetric smoothing (fast attack, slower release)
-        const tau = rawP > this.ps ? 6 : 16;
+        // (0.12 ink: a faster release, so the pressure falling as the pen lifts thins the end live)
+        const tau = rawP > this.ps ? 6 : this.v12 ? 8 : 16;
         this.ps += (rawP - this.ps) * (1 - Math.exp(-dtMs / tau));
       }
     }
@@ -244,7 +258,7 @@ export class StrokeBuilder {
     const ox = this.fx;
     const oy = this.fy;
     const prevPt = this.filtered[this.filtered.length - 1];
-    this.filtered.push({ x: ox / z, y: oy / z, p: this.pressureValue(), v: this.vs, t });
+    this.filtered.push({ x: ox / z, y: oy / z, p: this.pressureValue(), v: this.vs, t, ...tiltOf(s) });
     this.arc.push(this.arc[this.arc.length - 1] + Math.hypot(ox - prevPt.x * z, oy - prevPt.y * z));
     if (corner) this.corners.push(this.filtered.length - 1);
     this.emitStable();
@@ -294,6 +308,7 @@ export class StrokeBuilder {
         p: last.p,
         v: last.v,
         t: endRaw.t,
+        ...tiltOf(endRaw),
       },
     ]);
   }
@@ -303,7 +318,18 @@ export class StrokeBuilder {
    * straight; up to twice the base width at 1 px/ms), narrower when it is slow.
    */
   private sigmaAt(q: FPoint): number {
-    return this.sigma() * (1 + clamp(q.v, 0, 1));
+    return this.sigma() * (1 + clamp(q.v, 0, 1)) * (1 + LIGHT_SIGMA * this.lightness(q.p));
+  }
+
+  /**
+   * How light the touch is at a point: 0 at the writer's typical pressure or more, 1 at no
+   * pressure (0.12). A light touch makes the Pencil's position and pressure noisier and the width
+   * curve is steepest there, so light writing is smoothed more (position and width).
+   */
+  private lightness(p: number): number {
+    if (!this.v12 || !this.ctx.hasPressure) return 0;
+    const typical = this.params.typicalPressure ?? TYPICAL_PRESSURE_V12;
+    return clamp(1 - p / typical, 0, 1);
   }
 
   /** Centerline smoothing width (screen px, Gaussian sigma); 0 = off. */
@@ -346,6 +372,9 @@ export class StrokeBuilder {
     let sy = 0;
     let sp = 0;
     let sv = 0;
+    let stx = 0;
+    let sty = 0;
+    let stw = 0;
     let sw = 0;
     for (let j = i; j >= lo && arc[i] - arc[j] <= w; j--) {
       const d = arc[i] - arc[j];
@@ -355,6 +384,13 @@ export class StrokeBuilder {
       sy += f[j].y * wt;
       sp += f[j].p * wt;
       sv += f[j].v * wt;
+      const ftx = f[j].tx;
+      const fty = f[j].ty;
+      if (ftx !== undefined && fty !== undefined) {
+        stx += ftx * wt;
+        sty += fty * wt;
+        stw += wt;
+      }
       sw += wt;
     }
     for (let j = i + 1; j <= hi && arc[j] - arc[i] <= w; j++) {
@@ -365,10 +401,24 @@ export class StrokeBuilder {
       sy += f[j].y * wt;
       sp += f[j].p * wt;
       sv += f[j].v * wt;
+      const ftx = f[j].tx;
+      const fty = f[j].ty;
+      if (ftx !== undefined && fty !== undefined) {
+        stx += ftx * wt;
+        sty += fty * wt;
+        stw += wt;
+      }
       sw += wt;
     }
     // pressure and speed are evened out over the same window: their noise made the width wobble
-    return sw > 0 ? { ...q, x: sx / sw, y: sy / sw, p: sp / sw, v: sv / sw } : q;
+    // (and the Pencil tilt, so tilt noise does not become width noise either)
+    if (!(sw > 0)) return q;
+    const out: FPoint = { ...q, x: sx / sw, y: sy / sw, p: sp / sw, v: sv / sw };
+    if (stw > 0) {
+      out.tx = stx / stw;
+      out.ty = sty / stw;
+    }
+    return out;
   }
 
   /** Move filtered points whose smoothing window is complete into the final smoothed list. */
@@ -437,6 +487,10 @@ export class StrokeBuilder {
         v: lerp(p1.v, p2.v, u),
         t: lerp(p1.t, p2.t, u),
       };
+      if (p1.tx !== undefined && p1.ty !== undefined && p2.tx !== undefined && p2.ty !== undefined) {
+        q.tx = lerp(p1.tx, p2.tx, u);
+        q.ty = lerp(p1.ty, p2.ty, u);
+      }
       this.pushSample(q, ws, xs, ys, rs, 1);
     }
   }
@@ -476,23 +530,29 @@ export class StrokeBuilder {
       // mild synthetic taper is added (a long one makes small Chinese strokes look pinched).
       if (prm.tapering > 0 && !this.ctx.cutStart) {
         const ls = prm.tapering * (0.5 + 0.9 * prm.width);
-        const minStart = this.ctx.hasPressure ? 0.82 : 0.6;
+        // 0.12 ink: a real 起笔 point (GoodNotes-like); before: a mild dip only
+        const minStart = this.v12 ? ENTRY_MIN_V12 : this.ctx.hasPressure ? 0.82 : 0.6;
         const e = ls > 0 ? smoothstep(0, 1, ws.s / ls) : 1;
         target *= lerp(minStart, 1, e);
       }
     } else {
-      const pm = pressureMultiplier(q.p, prm.pressureSensitivity);
+      // 0.12 ink: a feather-light touch (pen down / lift) may go down to a hairline
+      // (and the writer's typical pressure, calibrated or the measured default, gives the nominal width)
+      const pm = this.v12 ? pressureMultiplier(q.p, prm.pressureSensitivity, prm.typicalPressure ?? TYPICAL_PRESSURE_V12, 0.05) : pressureMultiplier(q.p, prm.pressureSensitivity);
       const vm = 1 - prm.velocityThinning * 0.55 * smoothstep(0.35, 3.2, q.v);
       const nm = ws.started ? nibMultiplier(dir, (prm.nibAngle * Math.PI) / 180, prm.nibFlatness) : 1;
       target = base * pm * vm * nm;
       // entry taper (起笔): grows over the first few widths of travel
       if (prm.tapering > 0 && !this.ctx.cutStart) {
-        const ls = prm.tapering * (1.2 + 2.2 * prm.width);
-        const minStart = this.tool === 'fountain' ? 0.5 : 0.8;
+        const ls = this.v12 ? prm.tapering * (0.6 + 1.0 * prm.width) : prm.tapering * (1.2 + 2.2 * prm.width);
+        const minStart = this.v12 ? ENTRY_MIN_V12 : this.tool === 'fountain' ? 0.5 : 0.8;
         const e = ls > 0 ? smoothstep(0, 1, ws.s / ls) : 1;
         target *= lerp(minStart, 1, e);
       }
     }
+
+    // 0.12 ink: a tilted Pencil draws wider, like a real pen laid over (no tilt reported: unchanged)
+    if (this.v12 && this.tool !== 'highlighter' && q.tx !== undefined && q.ty !== undefined) target *= tiltFactor(q.tx, q.ty, prm.tiltSensitivity ?? DEFAULT_TILT_SENSITIVITY);
 
     if (!ws.started) {
       ws.w = target;
@@ -500,7 +560,8 @@ export class StrokeBuilder {
     } else {
       // smooth width along arc length so pressure noise never shows as bumps
       // (engine 2 filters pressure itself, so it needs less arc-length smoothing)
-      const smoothLen = v2 ? 0.3 + prm.width * 0.45 : 0.35 + prm.width * 0.6;
+      // (0.12 ink: longer, so pressure noise never shows as small waves along the edge)
+      const smoothLen = this.v12 ? (0.5 + prm.width * 0.8) * (1 + LIGHT_WIDTH * this.lightness(q.p)) : v2 ? 0.3 + prm.width * 0.45 : 0.35 + prm.width * 0.6;
       const ds = Math.hypot(q.x - ws.lastX, q.y - ws.lastY);
       ws.w += (target - ws.w) * expAlpha(ds, smoothLen);
     }
@@ -535,7 +596,7 @@ export class StrokeBuilder {
     if (predicted && predicted.length) {
       // Predicted samples (PointerEvent.getPredictedEvents) only extend the preview; never stored.
       const last = cps[cps.length - 1];
-      cps = cps.concat(predicted.map((q) => ({ x: q.x, y: q.y, p: last.p, v: last.v, t: Math.max(q.t, last.t) })));
+      cps = cps.concat(predicted.map((q) => ({ x: q.x, y: q.y, p: last.p, v: last.v, t: Math.max(q.t, last.t), ...tiltOf(q) })));
     }
     const ws: WidthState = { ...this.widthState };
     if (this.stableXs.length === 0) {
@@ -567,6 +628,12 @@ export class StrokeBuilder {
     }
     if (!this.ctx.cutEnd) ({ xs, ys, rs } = trimGeometryHook(xs, ys, rs, this.ctx.zoom));
     const base = this.ctx.cutEnd ? { ...this.params, tapering: 0 } : this.params;
+    if (this.v12) {
+      // 0.12 ink: a real 收笔 (笔锋), see taperEnd
+      if (!this.ctx.cutEnd && base.tapering > 0 && this.tool !== 'highlighter') ({ xs, ys, rs } = taperEnd(xs, ys, rs, this.tool, base, this.exitSpeed(), this.ctx.engine === 2 && this.ctx.hasPressure));
+      const g = finishGeometry(xs, ys, rs, this.tool, { ...base, tapering: 0 }, this.exitSpeed());
+      return quantizeGeometry(simplifyGeometry(g));
+    }
     const prm = { ...base, tapering: base.tapering * COMMIT_TAPER };
     const drawnEnd = rs.length ? rs[rs.length - 1] : 0;
     const dep = COMMIT_TAPER_DEPTH;
@@ -606,6 +673,11 @@ export class StrokeBuilder {
     const rs = (st.rs as number[]).concat(tl.rs);
     // a fragment end cut by the partial eraser keeps its width (no exit taper)
     const prm = this.ctx.cutEnd ? { ...this.params, tapering: 0 } : this.params;
+    if (this.v12) {
+      // the same 笔锋 as a stroke committed when the pen lifts (eraser pieces are rebuilt here)
+      const t = prm.tapering > 0 && this.tool !== 'highlighter' ? taperEnd(xs, ys, rs, this.tool, prm, this.exitSpeed(), this.ctx.engine === 2 && this.ctx.hasPressure) : { xs, ys, rs };
+      return finishGeometry(t.xs, t.ys, t.rs, this.tool, { ...prm, tapering: 0 }, this.exitSpeed());
+    }
     if (this.ctx.engine === 2) return finishGeometryV2(xs, ys, rs, this.tool, prm, this.exitSpeed(), this.ctx.hasPressure, depth);
     return finishGeometry(xs, ys, rs, this.tool, prm, this.exitSpeed(), depth);
   }
@@ -797,6 +869,125 @@ export function trimLiftHook(samples: readonly InputSample[], zoom: number): Inp
  */
 export const COMMIT_TAPER = 0.5;
 export const COMMIT_TAPER_DEPTH = 0;
+/** 0.12 ink: width at the very start of a stroke (起笔 point), as a fraction of the pen width. */
+const ENTRY_MIN_V12 = 0.3;
+
+/**
+ * 笔锋 of a 0.12 stroke. The live ink ends in a round cap of radius R; the stored ink ends in a
+ * point that reaches exactly as far: the centerline is extended along the exit direction by
+ * R × (1 − minEnd) and the width narrows over the last ≥ 3.5 R to minEnd × R at the new tip
+ * (to 5 % on a quick flick of the fountain pen, 55 % on a slow lift). Where the Pencil's own
+ * pressure release already thinned the end, correspondingly less is added. Nothing reaches beyond
+ * the live ink's end, so lifting the pen only sharpens the end.
+ */
+export function taperEnd(xs: number[], ys: number[], rs: number[], tool: InkTool, params: PenParams, exitSpeed: number, realPressure: boolean): { xs: number[]; ys: number[]; rs: number[] } {
+  const n = xs.length;
+  if (n < 3) return { xs, ys, rs };
+  let total = 0;
+  for (let i = 1; i < n; i++) total += Math.hypot(xs[i] - xs[i - 1], ys[i] - ys[i - 1]);
+  const R = rs[n - 1];
+  if (!(R > 0) || total < R * 2) return { xs, ys, rs };
+  const fast = smoothstep(0.3, 2, exitSpeed);
+  // reference width before the end (the stroke's width where the pen was still pressing)
+  let ref = 0;
+  let refN = 0;
+  let acc = 0;
+  for (let i = n - 1; i > 0 && acc < R * 8; i--) {
+    acc += Math.hypot(xs[i] - xs[i - 1], ys[i] - ys[i - 1]);
+    if (acc > R * 3) {
+      ref = Math.max(ref, rs[i]);
+      refN++;
+    }
+  }
+  const refR = refN ? ref : R;
+  const natural = realPressure && refR > 0 ? clamp(1 - R / refR, 0, 1) : 0;
+  const minEnd = lerp(sharpEnd(tool, fast), 1, natural);
+  if (minEnd >= 0.999) return { xs, ys, rs };
+  // extend along the exit direction (over ~2 R)
+  let k = n - 2;
+  while (k > 0 && Math.hypot(xs[n - 1] - xs[k], ys[n - 1] - ys[k]) < R * 2) k--;
+  const dx = xs[n - 1] - xs[k];
+  const dy = ys[n - 1] - ys[k];
+  const dl = Math.hypot(dx, dy);
+  const ext = R * (1 - minEnd);
+  const X = xs.slice();
+  const Y = ys.slice();
+  const Rs = rs.slice();
+  if (dl > 1e-6 && ext > 0) {
+    const m = Math.max(1, Math.ceil(ext / MAX_SPLINE_STEP));
+    for (let j = 1; j <= m; j++) {
+      X.push(xs[n - 1] + (dx / dl) * ((ext * j) / m));
+      Y.push(ys[n - 1] + (dy / dl) * ((ext * j) / m));
+      Rs.push(R);
+    }
+  }
+  // narrow over the last le of the extended centerline
+  const N = X.length;
+  const le = Math.min((total + ext) * 0.4, Math.max(R * 3.5, params.tapering * (0.6 + 2.6 * fast) * (0.6 + params.width)));
+  let d = 0;
+  for (let i = N - 1; i >= 0 && d < le; i--) {
+    const e = 1 - d / le; // 1 at the tip
+    Rs[i] = Math.max(0.03, Rs[i] * lerp(1, minEnd, Math.pow(e, 1.6)));
+    if (i > 0) d += Math.hypot(X[i] - X[i - 1], Y[i] - Y[i - 1]);
+  }
+  return { xs: X, ys: Y, rs: Rs };
+}
+
+/** Extra centerline smoothing for the lightest touch (× (1 + this)), and extra width smoothing. */
+const LIGHT_SIGMA = 1;
+const LIGHT_WIDTH = 1.5;
+
+/** Default tilt sensitivity (0.12 ink): a pen tilted 45° draws 20 % wider. */
+export const DEFAULT_TILT_SENSITIVITY = 0.4;
+/**
+ * Typical pressure for pens without a calibrated value (0.12 ink, engine 1). The iPad reports
+ * measured a median writing pressure of 0.06–0.12 (Apple Pencil in Obsidian), so 0.12 — the
+ * former fixed 0.3 drew normal writing at about half the nominal width.
+ */
+export const TYPICAL_PRESSURE_V12 = 0.12;
+
+/**
+ * A sample iPadOS delivered a second time (0.11.1-beta.5). With the Pencil, the coalesced list of a
+ * pointermove often repeats the previous frame's samples with a newer timestamp, so the input reads
+ * a, b, a, b: the ink stepped back to `a` and forward again every frame (~120 Hz), which drew the
+ * segmented, "pieced together" edges of a straight line. In one real note half of all samples were
+ * such repeats. A sample sitting exactly on one of the two samples before the last one is that
+ * repeat (fractional coordinates do not land on the same spot twice by chance) and is dropped. A
+ * sample on the last position itself is a pen held still and stays when its pressure changed.
+ */
+export function isRedelivered(raw: readonly InputSample[], s: InputSample): boolean {
+  const n = raw.length;
+  if (n === 0) return false;
+  const last = raw[n - 1];
+  if (last.x === s.x && last.y === s.y) return last.p === s.p;
+  for (let k = 2; k <= 3 && n - k >= 0; k++) {
+    const r = raw[n - k];
+    if (r.x === s.x && r.y === s.y) return true;
+  }
+  return false;
+}
+
+/** The tilt of a sample, when the pen reports one. */
+function tiltOf(s: { tx?: number; ty?: number }): { tx?: number; ty?: number } {
+  return s.tx !== undefined && s.ty !== undefined && Number.isFinite(s.tx) && Number.isFinite(s.ty) ? { tx: s.tx, ty: s.ty } : {};
+}
+
+/**
+ * Width factor of a tilted pen: the angle from vertical from the two plane angles (tiltX, tiltY),
+ * 0° upright … 90° flat, then 1 + sensitivity × angle / 90°.
+ */
+export function tiltFactor(tx: number, ty: number, sensitivity: number): number {
+  const rad = Math.PI / 180;
+  const a = Math.tan(clamp(Math.abs(tx), 0, 89.9) * rad);
+  const b = Math.tan(clamp(Math.abs(ty), 0, 89.9) * rad);
+  const angle = Math.atan(Math.hypot(a, b)) / rad;
+  return 1 + clamp(sensitivity, 0, 1) * (angle / 90);
+}
+
+/** Width the end narrows to (0.12 ink): a slow lift keeps some width, a flick ends in a point. */
+function sharpEnd(tool: InkTool, fast: number): number {
+  return tool === 'fountain' ? lerp(0.55, 0.05, fast) : lerp(0.85, 0.03, fast);
+}
 /** Stored geometry precision: 1/100 unit for positions, 1/200 for radii (sub-pixel even at 24×). */
 const GEO_Q = 100;
 const GEO_RQ = 200;

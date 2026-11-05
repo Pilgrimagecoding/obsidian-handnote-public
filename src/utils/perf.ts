@@ -16,6 +16,10 @@ export class RollingStat {
   get count(): number {
     return this.buf.length;
   }
+  /** The values kept (oldest first). */
+  values(): readonly number[] {
+    return this.buf;
+  }
   summary(): { n: number; avg: number; p50: number; p95: number; max: number } {
     const n = this.buf.length;
     if (n === 0) return { n: 0, avg: 0, p50: 0, p95: 0, max: 0 };

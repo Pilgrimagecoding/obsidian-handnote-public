@@ -151,6 +151,8 @@ export function sanitizeEngine2(p: Partial<PenParams> | undefined): Partial<PenP
   if (mx !== undefined) out.maxWidthRatio = mx;
   const ps = num(p?.pressureSmoothing, 0, 1);
   if (ps !== undefined) out.pressureSmoothing = ps;
+  const ts = num(p?.tiltSensitivity, 0, 1);
+  if (ts !== undefined) out.tiltSensitivity = ts;
   const tp = num(p?.typicalPressure, 0.05, 0.8);
   if (tp !== undefined) out.typicalPressure = tp;
   const hp = num(p?.heavyPressure, 0.15, 1);

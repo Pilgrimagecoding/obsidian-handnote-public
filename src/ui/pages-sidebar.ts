@@ -35,7 +35,17 @@ export interface PagesSidebarModel {
   board?(): boolean;
   /** 0.11: a contents entry was tapped (whiteboard: `i` is a frame in board order). Default: onGo. */
   onGoContents?(i: number): void;
+  /** 0.11.1: page i is bookmarked (red flag on its thumbnail). */
+  isBookmarked?(i: number): boolean;
+  /** 0.11.1: the flag on a thumbnail (or "add to favourites" in the page menu) was tapped. */
+  onBookmark?(i: number): void;
+  /** 0.11.1: which pages the grid lists (kept by the editor while the note is open). */
+  filter?(): PageFilter;
+  onFilter?(f: PageFilter): void;
 }
+
+/** All pages, or only the bookmarked ones (GoodNotes "All pages / Bookmarks only"). */
+export type PageFilter = 'all' | 'bookmarks';
 
 /** One contents entry: `index` is the note page it opens (null: that page is not in the note). */
 export interface ContentsEntry {
@@ -95,6 +105,9 @@ export class PagesSidebar {
   private toc: HTMLElement | null = null;
   private tabs: { pages: HTMLButtonElement; contents: HTMLButtonElement } | null = null;
   private tocLoaded = false;
+  private readonly filterBar: HTMLElement;
+  private readonly filterBtn: HTMLButtonElement;
+  private readonly emptyNote: HTMLElement;
 
   constructor(
     private readonly root: HTMLElement,
@@ -124,7 +137,15 @@ export class PagesSidebar {
       this.tabs = { pages: tab(t('pages'), 'pages'), contents: tab(t('contents'), 'contents') };
       this.tabs.pages.classList.add('is-active');
     }
+    // 0.11.1: "All pages ⌄" / "Bookmarks only ⌄" filter above the grid
+    this.filterBar = el('div', 'hn-ps-filter', this.el);
+    this.filterBtn = el('button', 'hn-ps-filter-btn', this.filterBar);
+    this.filterBtn.type = 'button';
+    this.filterBtn.setAttribute('aria-haspopup', 'menu');
+    onTap(this.filterBtn, () => this.openFilterMenu());
     this.list = el('div', 'hn-ps-list', this.el);
+    this.emptyNote = el('div', 'hn-ps-empty', this.list, t('bookmarksEmpty'));
+    hide(this.emptyNote);
     this.marker = el('div', 'hn-ps-marker', this.list);
     hide(this.marker);
     // while a thumbnail is being dragged the list must not scroll natively (iPad)
@@ -146,6 +167,7 @@ export class PagesSidebar {
     this.tabs?.pages.classList.toggle('is-active', mode === 'pages');
     this.tabs?.contents.classList.toggle('is-active', mode === 'contents');
     this.list.classList.toggle('is-hidden', mode !== 'pages');
+    this.filterBar.classList.toggle('is-hidden', mode !== 'pages' || !!this.m.board?.());
     if (mode === 'contents') {
       if (!this.toc) this.toc = el('div', 'hn-ps-toc', this.el);
       this.toc.classList.remove('is-hidden');
@@ -280,9 +302,17 @@ export class PagesSidebar {
     const cur = this.m.current();
     const board = this.m.board?.() ?? false;
     const ro = this.m.readOnly() || board;
+    const onlyMarked = this.filtered();
+    this.filterBar.classList.toggle('is-hidden', board || this.mode !== 'pages' || !this.m.isBookmarked);
+    this.filterBtn.textContent = '';
+    el('span', 'hn-ps-filter-label', this.filterBtn, onlyMarked ? t('bookmarksOnly') : t('allPages'));
+    setHnIcon(el('span', 'hn-ps-filter-chev', this.filterBtn), 'chevron-down');
+    let shown = 0;
     this.titleEl.textContent = board ? t('board') : `${t('pages')} · ${n}`;
     if (this.tabs) this.tabs.pages.textContent = board ? t('board') : `${t('pages')} · ${n}`;
     for (let i = 0; i < n; i++) {
+      if (onlyMarked && !this.m.isBookmarked?.(i)) continue;
+      shown++;
       const cell = el('div', 'hn-ps-cell' + (i === cur ? ' is-current' : ''), this.list);
       cell.dataset.index = String(i);
       const box = el('div', 'hn-ps-box', cell);
@@ -298,6 +328,7 @@ export class PagesSidebar {
         else this.fillThumb(box);
         continue;
       }
+      this.addFlag(cell, i);
       const more = el('button', 'hn-ps-more', foot);
       more.type = 'button';
       more.setAttribute('aria-label', `${t('pageOptions')} ${i + 1}`);
@@ -306,7 +337,9 @@ export class PagesSidebar {
       if (this.io) this.io.observe(box);
       else this.fillThumb(box);
     }
-    if (!ro) {
+    if (onlyMarked && !shown) show(this.emptyNote);
+    else hide(this.emptyNote);
+    if (!ro && !onlyMarked) {
       const add = el('button', 'hn-ps-cell hn-ps-add', this.list);
       add.type = 'button';
       add.setAttribute('aria-label', t('addPage'));
@@ -371,6 +404,104 @@ export class PagesSidebar {
     cv.classList.add('hn-ps-canvas');
     box.textContent = '';
     box.appendChild(cv);
+    this.placeFlag(box);
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Bookmarks (0.11.1, GoodNotes-like): a flag in the top right corner of every thumbnail, red when
+  // the page is bookmarked; the grid can list only the bookmarked pages.
+  // ---------------------------------------------------------------------------------------------
+
+  private filtered(): boolean {
+    return !!this.m.isBookmarked && !this.m.board?.() && this.m.filter?.() === 'bookmarks';
+  }
+
+  private addFlag(cell: HTMLElement, i: number): void {
+    if (!this.m.isBookmarked) return;
+    const on = this.m.isBookmarked(i);
+    const ro = this.m.readOnly() || !this.m.onBookmark;
+    if (ro && !on) return;
+    const flag = el('button', 'hn-ps-flag' + (on ? ' is-on' : ''), cell);
+    flag.type = 'button';
+    flag.disabled = ro;
+    this.labelFlag(flag, on);
+    setHnIcon(flag, on ? 'bookmark-fill' : 'bookmark');
+    // the thumbnail's press / long press / drag must not start under the flag
+    flag.addEventListener('pointerdown', (e) => e.stopPropagation());
+    if (!ro) onTap(flag, () => this.m.onBookmark?.(i));
+  }
+
+  private labelFlag(flag: HTMLElement, on: boolean): void {
+    const label = on ? t('removeBookmark') : t('addBookmark');
+    flag.setAttribute('aria-label', label);
+    flag.setAttribute('aria-pressed', String(on));
+    flag.title = label;
+  }
+
+  /** Put the flag on the page drawing (a landscape page is shorter than its box). */
+  private placeFlag(box: HTMLElement): void {
+    const cell = box.parentElement;
+    const flag = cell?.querySelector<HTMLElement>('.hn-ps-flag');
+    const cv = box.querySelector<HTMLElement>('canvas');
+    if (!flag || !cv) return;
+    const w = parseFloat(cv.style.width) || THUMB_BOX_W - 8;
+    const h = parseFloat(cv.style.height) || THUMB_BOX_H - 8;
+    flag.style.top = `${Math.max(0, Math.round((THUMB_BOX_H - h) / 2) - 2)}px`;
+    flag.style.right = `${Math.max(0, Math.round((THUMB_BOX_W - w) / 2) - 2)}px`;
+  }
+
+  /** The bookmark of page i changed (from the flag, a menu or a command). */
+  bookmarkChanged(i: number): void {
+    if (this.filtered()) {
+      this.render();
+      return;
+    }
+    const cell = this.list.querySelector<HTMLElement>(`.hn-ps-cell[data-index="${i}"]`);
+    if (!cell) return;
+    cell.querySelector('.hn-ps-flag')?.remove();
+    this.addFlag(cell, i);
+    const box = cell.querySelector<HTMLElement>('.hn-ps-box');
+    if (box) this.placeFlag(box);
+  }
+
+  setFilter(f: PageFilter): void {
+    if (!this.m.onFilter || (this.m.filter?.() ?? 'all') === f) return;
+    this.m.onFilter(f);
+    this.list.scrollTop = 0;
+    this.render();
+  }
+
+  private openFilterMenu(): void {
+    const wasOpen = this.menu?.dataset.kind === 'filter';
+    this.closeMenu();
+    if (wasOpen) return;
+    const menu = el('div', 'hn-ps-menu hn-ps-filter-menu', this.root);
+    menu.dataset.kind = 'filter';
+    menu.setAttribute('role', 'menu');
+    menu.addEventListener('pointerdown', (e) => e.stopPropagation());
+    const cur = this.m.filter?.() ?? 'all';
+    for (const [f, label] of [
+      ['all', t('allPages')],
+      ['bookmarks', t('bookmarksOnly')],
+    ] as [PageFilter, string][]) {
+      const b = el('button', 'hn-ps-menu-row' + (f === cur ? ' is-checked' : ''), menu);
+      b.type = 'button';
+      b.setAttribute('role', 'menuitemradio');
+      b.setAttribute('aria-checked', String(f === cur));
+      const ic = el('span', 'hn-row-icon', b);
+      if (f === cur) setHnIcon(ic, 'check');
+      el('span', 'hn-row-label', b, label);
+      onTap(b, () => {
+        this.closeMenu();
+        this.setFilter(f);
+      });
+    }
+    // below the pill, left aligned
+    const rr = this.root.getBoundingClientRect();
+    const ar = this.filterBtn.getBoundingClientRect();
+    menu.style.left = `${Math.max(8, ar.left - rr.left)}px`;
+    menu.style.top = `${ar.bottom - rr.top + 6}px`;
+    this.attachMenu(menu, this.filterBtn);
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -414,7 +545,7 @@ export class PagesSidebar {
       };
       this.drag = d;
       cell.classList.add('is-pressed');
-      if (!mouse && !this.m.readOnly() && !this.m.board?.()) d.timer = window.setTimeout(() => this.startDrag(d, d.lastX, d.lastY), LONG_PRESS_MS);
+      if (!mouse && !this.m.readOnly() && !this.m.board?.() && !this.filtered()) d.timer = window.setTimeout(() => this.startDrag(d, d.lastX, d.lastY), LONG_PRESS_MS);
       try {
         box.setPointerCapture(e.pointerId);
       } catch {
@@ -446,7 +577,7 @@ export class PagesSidebar {
       const moved = Math.hypot(e.clientX - d.startX, e.clientY - d.startY);
       if (!d.active) {
         if (moved > DRAG_SLOP) {
-          if (d.mouse && !this.m.readOnly() && !this.m.board?.()) this.startDrag(d, e.clientX, e.clientY);
+          if (d.mouse && !this.m.readOnly() && !this.m.board?.() && !this.filtered()) this.startDrag(d, e.clientX, e.clientY);
           else this.endGesture(); // a finger that moves before the long press scrolls the list
         }
         return;
@@ -645,6 +776,11 @@ export class PagesSidebar {
       });
     };
     const sep = () => el('div', 'hn-ps-menu-sep', menu);
+    if (!ro && this.m.isBookmarked && this.m.onBookmark) {
+      const on = this.m.isBookmarked(i);
+      row(on ? 'bookmark-fill' : 'bookmark', on ? t('removeBookmark') : t('addBookmark'), () => this.m.onBookmark?.(i));
+      sep();
+    }
     if (!ro) {
       row('page-before', t('insertPageBefore'), () => this.m.onInsert(i));
       row('page-after', t('insertPageAfter'), () => this.m.onInsert(i + 1));
@@ -677,6 +813,11 @@ export class PagesSidebar {
     top = Math.max(8, Math.min(top, rr.height - h - 8));
     menu.style.left = `${left}px`;
     menu.style.top = `${top}px`;
+    this.attachMenu(menu, anchor);
+  }
+
+  /** Make `menu` the open menu: closed by a press outside it (or on `anchor` again) and by Escape. */
+  private attachMenu(menu: HTMLElement, anchor: HTMLElement): void {
     this.menu = menu;
     const outside = (e: Event) => {
       if (!menu.contains(e.target as Node) && !anchor.contains(e.target as Node)) this.closeMenu();

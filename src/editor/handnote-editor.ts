@@ -44,7 +44,7 @@ import { LassoController, clipPlainText, lassoClipboard, setLassoClipboard, tran
 import { ContextMenu, type MenuEntry } from '../ui/context-menu';
 import { MAX_PASTE_IMAGE, cleanPastedText, fromDataTransfer, readSystemClipboard, samePlain, type ClipboardContent } from './system-clipboard';
 import { PullToAddPage } from './pull-to-add';
-import { PagesSidebar, type ContentsEntry, type ContentsGroup } from '../ui/pages-sidebar';
+import { PagesSidebar, type ContentsEntry, type ContentsGroup, type PageFilter } from '../ui/pages-sidebar';
 import { LaserPointer } from './laser';
 import { layoutSelection, type LayoutOp } from './layout';
 import type { AIStatus, AIRunResult } from '../ai/service';
@@ -217,6 +217,8 @@ export class HandNoteEditor {
   private lastFingerTap: { x: number; y: number; t: number } | null = null;
   private sidebarRaf = 0;
   private sidebarCurrent = -1;
+  /** 0.11.1: page navigator filter (all pages / bookmarks only), kept while the note is open. */
+  private pagesFilter: PageFilter = 'all';
   private thumbCache = new WeakMap<Page, { key: string; strokes: Stroke[]; items: Item[]; canvas: HTMLCanvasElement }>();
   private kbHintShown = false;
 
@@ -2851,8 +2853,14 @@ export class HandNoteEditor {
   }
 
   /** Measured Pencil pressure range: median and p99 (only with enough real pressure data). */
+  /**
+   * The writer's pressure (median / p99) for "Calibrate from my writing": the input diagnostics
+   * when collected, otherwise the Pencil pressure of the latest writing on this device (0.12:
+   * the last 2000 samples are always kept, so writing a few lines is enough).
+   */
   private measuredPressure(): { typical: number; heavy: number } | null {
-    const p = this.diagnostics.pressure;
+    const d = this.diagnostics.pressure;
+    const p = d.length >= 200 ? d : [...this.perf.pressure.values()];
     if (p.length < 200 || pressureVerdict(p).verdict !== 'real') return null;
     const s = [...p].sort((a, b) => a - b);
     return { typical: quantile(s, 0.5), heavy: quantile(s, 0.99) };
@@ -2873,10 +2881,10 @@ export class HandNoteEditor {
         onParams: (prm) => {
           const prev = this.activeParams(tool);
           this.setActiveParams(tool, prm);
-          // a calibration applies to every engine-2 pen
+          // a calibration applies to every pen with pressure (0.12: also pencil and ballpoint)
           if (prm.typicalPressure !== prev.typicalPressure || prm.heavyPressure !== prev.heavyPressure) {
-            const other: InkTool = tool === 'pencil' ? 'fountain' : 'pencil';
-            if (this.engineFor(other) === ENGINE_EXPERIMENTAL) {
+            for (const other of ['fountain', 'pencil', 'ballpoint'] as InkTool[]) {
+              if (other === tool) continue;
               this.setActiveParams(other, { ...this.activeParams(other), typicalPressure: prm.typicalPressure, heavyPressure: prm.heavyPressure });
             }
           }
@@ -3115,6 +3123,12 @@ export class HandNoteEditor {
       hasContents: () => this.contentSources().length > 0,
       contents: () => this.loadContents(),
       board: () => this.boardMode,
+      isBookmarked: (i) => !!this.doc.pages[i]?.bookmark,
+      onBookmark: (i) => this.toggleBookmark(i),
+      filter: () => this.pagesFilter,
+      onFilter: (f) => {
+        this.pagesFilter = f;
+      },
       onGoContents: (i) => {
         if (!this.boardMode) return this.gotoPage(i);
         const f = framesInOrder(this.doc.pages[0])[i];
@@ -3188,6 +3202,25 @@ export class HandNoteEditor {
     if (this.destroyed) return;
     this.keepViewAcrossResize(() => this.root.classList.remove('has-pages-sidebar', 'is-sidebar-overlay'));
     this.toolbar.setPagesOpen(false);
+  }
+
+  /**
+   * Bookmark a page or remove its bookmark (0.11.1, GoodNotes "Add to favorites"). Saved with the
+   * note like any change, but not an undo step: undo / redo are for content.
+   */
+  toggleBookmark(index: number, announce = false): void {
+    const page = this.doc.pages[index];
+    if (!page || this.readOnly || this.boardMode || this.closed) return;
+    if (page.bookmark) delete page.bookmark;
+    else page.bookmark = true;
+    this.host.onChange();
+    this.sidebar?.bookmarkChanged(index);
+    if (announce) this.notify(t(page.bookmark ? 'bookmarkAdded' : 'bookmarkRemoved'));
+  }
+
+  /** The current page is bookmarked. */
+  get currentBookmarked(): boolean {
+    return !!this.doc.pages[this.currentPageIndex()]?.bookmark;
   }
 
   /** Rotate a page 90° clockwise with its content (one undo step). */
@@ -3702,6 +3735,8 @@ export class HandNoteEditor {
         readOnly: this.readOnly,
         board: this.boardMode,
         actions: [...(this.host.menuActions ?? []), ...(this.boardMode && this.host.exportView ? [{ label: t('exportView'), run: () => this.host.exportView?.() }] : [])],
+        bookmarked: this.currentBookmarked,
+        onBookmark: () => this.toggleBookmark(this.currentPageIndex(), true),
         onAddPage: () => this.addPageAfterCurrent(),
         onDeletePage: () => this.deleteCurrentPage(),
         onClearPage: () => this.clearCurrentPage(),
