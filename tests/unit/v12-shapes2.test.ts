@@ -6,26 +6,46 @@ import { densify, handStroke } from './handshapes';
 
 type Pt = [number, number];
 
-test('shape pen: casual straight lines (any angle, bowed up to 9 %) become lines', () => {
+// 0.12.0-beta.9 (maintainer: "a slightly bent line becomes a straight line"): a line drawn with a
+// wobble or a bow of up to 3 % stays a line; a smooth bow of 6 % or more is a curve (gentle bend threshold 4.5 %)
+function bowed(len: number, ang: number, bow: number, seed: number): ReturnType<typeof recognizeShape> {
+  const a = (ang * Math.PI) / 180;
+  const ux = Math.cos(a);
+  const uy = Math.sin(a);
+  const ideal: Pt[] = Array.from({ length: 41 }, (_, i) => {
+    const u = i / 40;
+    const off = bow * len * 4 * u * (1 - u);
+    return [300 + ux * u * len - uy * off, 300 + uy * u * len + ux * off];
+  });
+  return recognizeShape(handStroke(ideal, { seed, wobble: 0.012 }));
+}
+
+test('shape pen: casual straight lines (any angle, bowed up to 3 %) become lines', () => {
   let ok = 0;
   let n = 0;
   for (const len of [60, 150, 400])
     for (const ang of [0, 30, 60, 90, 120, 160])
-      for (const bow of [0, 0.03, 0.06, 0.09])
+      for (const bow of [0, 0.015, 0.03])
         for (let s = 0; s < 2; s++) {
-          const a = (ang * Math.PI) / 180;
-          const ux = Math.cos(a);
-          const uy = Math.sin(a);
-          const ideal: Pt[] = Array.from({ length: 41 }, (_, i) => {
-            const u = i / 40;
-            const off = bow * len * 4 * u * (1 - u);
-            return [300 + ux * u * len - uy * off, 300 + uy * u * len + ux * off];
-          });
           n++;
-          if (recognizeShape(handStroke(ideal, { seed: 7 + s * 13 + ang + len, wobble: 0.012 }))?.kind === 'line') ok++;
+          if (bowed(len, ang, bow, 7 + s * 13 + ang + len)?.kind === 'line') ok++;
         }
   console.log(`  casual lines: ${ok}/${n}`);
   assert.ok(ok / n >= 0.9, `${ok}/${n}`);
+});
+
+test('shape pen: a gently bent line (a smooth bow of 6–9 %; ≥ 85 %) is a curve', () => {
+  let ok = 0;
+  let n = 0;
+  for (const len of [80, 150, 400])
+    for (const ang of [0, 30, 60, 90, 120, 160])
+      for (const bow of [0.06, 0.075, 0.09])
+        for (let s = 0; s < 2; s++) {
+          n++;
+          if (bowed(len, ang, bow, 11 + s * 17 + ang + len)?.kind === 'curve') ok++;
+        }
+  console.log(`  gentle curves: ${ok}/${n}`);
+  assert.ok(ok / n >= 0.85, `${ok}/${n}`);
 });
 
 const ellipse = (cx: number, cy: number, a: number, b: number, rot: number): Pt[] =>

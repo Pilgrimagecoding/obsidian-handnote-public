@@ -3,7 +3,7 @@
   <img src="assets/branding/hero-zh-light.png" alt="HandNote：手写笔记，就在你的仓库里。Obsidian 的手写笔记本页面，Apple Pencil、手指和鼠标都能写。右侧是一张真实截图：一页课堂手写笔记和向量草图，其中四个手写汉字被套索圈选并转换成了文字。">
 </picture>
 
-**HandNote** 是 [Obsidian](https://obsidian.md) 的手写笔记插件，主要为 iPad 和 Apple Pencil 设计，也支持手指、鼠标和数位板。在笔记本页面上手写，用套索选择，在本机把手写转换成可编辑的文字，还可以导入 PDF、Word、PowerPoint、Excel 并手写批注。每一页都是你仓库（Vault）里的一个普通 `.handnote` 文件。免费开源（MIT 许可）。
+**HandNote** 是 [Obsidian](https://obsidian.md) 的手写笔记插件，主要为 iPad 和 Apple Pencil 设计，也支持手指、鼠标和数位板。在笔记本页面上手写，用套索选择，在本机把手写转换成可编辑的文字，直接在 Markdown 笔记上手写，还可以导入 PDF、Word、PowerPoint、Excel 并手写批注。每一页都是你仓库（Vault）里的一个普通 `.handnote` 文件。免费开源（MIT 许可）。
 
 **[从 Obsidian 社区插件目录安装](https://community.obsidian.md/plugins/handnote)** ·
 [版本发布](https://github.com/Pilgrimagecoding/obsidian-handnote-public/releases) ·
@@ -18,7 +18,7 @@ iPad 片段：用 Apple Pencil 实拍的 HandNote 0.8.1。桌面片段：已发�
 
 ## 中文教程
 
-[安装与配置](docs/zh-CN/install.md) · [iPad 与 Apple Pencil](docs/zh-CN/ipad-apple-pencil.md) · [手写转文字](docs/zh-CN/handwriting-to-text.md) · [文档导入与批注](docs/zh-CN/documents.md) · [公式](docs/zh-CN/formulas.md) · [常见问题](docs/zh-CN/faq.md) · [已知限制](docs/zh-CN/limitations.md)
+[安装与配置](docs/zh-CN/install.md) · [iPad 与 Apple Pencil](docs/zh-CN/ipad-apple-pencil.md) · [手写转文字](docs/zh-CN/handwriting-to-text.md) · [文档导入与批注](docs/zh-CN/documents.md) · [Markdown 笔记手写批注](docs/zh-CN/markdown-ink.md) · [公式](docs/zh-CN/formulas.md) · [常见问题](docs/zh-CN/faq.md) · [已知限制](docs/zh-CN/limitations.md)
 
 ## 像在纸上一样书写
 
@@ -44,6 +44,12 @@ iPad 片段：用 Apple Pencil 实拍的 HandNote 0.8.1。桌面片段：已发�
 原文件原样保存在仓库里（默认 `HandNote imports` 文件夹），笔记只保存引用和你的笔迹。不运行宏，不上传任何文件。导入时会列出文件中无法显示的内容（图表、动画、脚注等）。
 
 ![一张关于特征值的 PowerPoint 幻灯片导入到 HandNote 后的样子：一条要点被荧光笔标出，公式框被圈住，旁边有手写批注 "exam!"、"key idea" 和 "see page 2"](assets/screenshots/desktop/07-import-annotate.png)
+
+## 在 Markdown 笔记上手写
+
+0.12.1 新增：在任意 Markdown 笔记右上角点 HandNote 笔尖图标，就能直接在 Obsidian 的编辑器里，用和 HandNote 笔记一样的钢笔、荧光笔、形状笔、橡皮、套索、文本框、图片和形状写批注。笔记仍然可以编辑：Apple Pencil 只写字，手指点一下正文就能在那里打字。可以左右拖到页边，缩放 50%–800%，每个大小下正文都重新排版、保持清晰。
+
+批注跟着文字走：上面加行、删行时，笔迹、文本框、图片跟着所在的行移动；荧光笔跟着它划过的字。批注单独保存在 `HandNote annotations/` 里，**`.md` 文件不会被改动**；找不到所在行的批注留在原处，绝不会被删除。笔迹只在编辑视图显示，阅读视图里看不到，也还不能导出 PNG / PDF（[详情](docs/zh-CN/markdown-ink.md)）。
 
 ## 公式用 LaTeX
 
@@ -95,6 +101,7 @@ iPad 片段：用 Apple Pencil 实拍的 HandNote 0.8.1。桌面片段：已发�
 - **支持 iPad 和 Apple Pencil 吗？** 支持，这是主要目标平台：压感、防误触，手指平移、缩放和撤销。
 - **能把手写转成文字吗？** 能，中文和英文，在本机识别；第一次需要下载模型（中文 15.8 MB、英文 7.5 MB）。内置的离线中文识别不需要下载，适合工整中文。
 - **能批注文档吗？** 能，从 0.9.0 起支持 PDF、Word（.docx、.doc）、PowerPoint（.pptx）和 Excel（.xlsx）。原文件不会被修改，也不会上传。
+- **能在 Markdown 笔记上手写吗？** 能，从 0.12.1 起，直接在 Obsidian 的编辑器里写。`.md` 文件不会被改动，笔迹保存在 `HandNote annotations/` 里。
 - **有无限画布吗？** 有，从 0.11.0 起支持无限白板，分页笔记也可以转成白板。
 - **有本机手写公式识别吗？** 没有。可以用带实时预览的 LaTeX 输入公式，或用你自己的 MyScript 密钥。
 - **免费吗？** 免费，MIT 开源，没有账号、订阅和遥测。可选的云服务使用你自己的密钥。
@@ -151,8 +158,9 @@ iPad 片段：用 Apple Pencil 实拍的 HandNote 0.8.1。桌面片段：已发�
 - 导入的 Word / PowerPoint / Excel 由 HandNote 自己重新排版，而不是 Microsoft Office：分页和字体可能略有不同，图表、SmartArt、动画、页眉页脚、脚注不显示。旧版 .ppt / .xls 需要先另存为 .pptx / .xlsx 或 PDF。Office 文件旁边会有一个小的 `.handnote-layout.json`，请让同步工具同步它。
 - 含导入页面的笔记使用文件格式 6，HandNote 0.8.x 只能只读打开。白板和 0.11 新增的曲线形状使用文件格式 7，HandNote 0.10 及更早版本只能只读打开。
 - 用 0.11 及以后版本写的字会额外保存画出来的墨迹，这些笔记的文件约比以前大 1.6–1.9 倍。
+- Markdown 笔记上的批注只在编辑视图显示（阅读视图和嵌入里看不到），还不能导出 PNG / PDF，套索没有「转换」和「AI」。笔迹跟着行走，不随句子变形；字体或宽度不同的设备上，横向位置可能有偏差。
 - 手机布局尚未优化。
-- 因为识别运行库内置在插件中，`main.js` 约 6.3 MB。Obsidian Sync 标准版不同步超过 5 MB 的文件，使用标准版时请在每台设备上从「第三方插件」安装 HandNote（笔记本身照常同步）。
+- 因为识别运行库内置在插件中，`main.js` 约 6.5 MB。Obsidian Sync 标准版不同步超过 5 MB 的文件，使用标准版时请在每台设备上从「第三方插件」安装 HandNote（笔记本身照常同步）。
 
 更多问答：[FAQ.md](FAQ.md)。
 

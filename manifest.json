@@ -1,9 +1,9 @@
 {
   "id": "handnote",
   "name": "HandNote",
-  "version": "0.11.1",
+  "version": "0.12.1",
   "minAppVersion": "1.11.4",
-  "description": "Write by hand on iPad with Apple Pencil, touch or mouse, convert handwriting to text on your device, and annotate PDF, Word, PowerPoint and Excel files in your vault.",
+  "description": "Write by hand on iPad with Apple Pencil, touch or mouse, convert handwriting to text on your device, and annotate Markdown notes, PDF, Word, PowerPoint and Excel files in your vault.",
   "author": "Yanzhe Shao",
   "authorUrl": "https://github.com/Pilgrimagecoding",
   "isDesktopOnly": false

@@ -61,7 +61,10 @@ for (const f of ['main.js', 'manifest.json', 'styles.css']) {
 
 const main = read('main.js');
 const requires = [...new Set([...main.matchAll(/require\(["']([^"']+)["']\)/g)].map((m) => m[1]))];
-check(requires.length === 1 && requires[0] === 'obsidian', `main.js requires only "obsidian" (found: ${requires.join(', ') || 'none'})`);
+// Obsidian provides these at runtime (they are external in the official sample plugin too):
+// "obsidian" always, and CodeMirror for editor extensions (Ink on Markdown, 0.12). Nothing else.
+const PROVIDED = ['obsidian', '@codemirror/view', '@codemirror/state'];
+check(requires.includes('obsidian') && requires.every((r) => PROVIDED.includes(r)), `main.js requires only modules Obsidian provides (${PROVIDED.join(', ')}; found: ${requires.join(', ') || 'none'})`);
 check(!/\bimport\(/.test(main), 'main.js has no dynamic import()');
 check(!/process\.versions|__dirname|child_process/.test(main), 'main.js uses no Node/Electron-only APIs');
 try {

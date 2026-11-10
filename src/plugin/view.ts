@@ -430,17 +430,17 @@ export class HandNoteView extends FileView {
   }
 }
 
-function countStrokes(d: HandNoteDocument): number {
+export function countStrokes(d: HandNoteDocument): number {
   return d.pages.reduce((n, p) => n + p.strokes.length, 0);
 }
 
-function peekRevision(text: string | null): number {
+export function peekRevision(text: string | null): number {
   if (!text) return 0;
   const m = /"revision":(\d+)/.exec(text.slice(0, 600));
   return m ? Number(m[1]) : 0;
 }
 
-class RecoveryModal extends Modal {
+export class RecoveryModal extends Modal {
   constructor(
     app: import('obsidian').App,
     private readonly when: string,

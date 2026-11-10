@@ -56,7 +56,7 @@ HandNote 每次保存前都会检查文件；如果另一台设备在这期间�
 备份仓库就包含了所有笔记。导出单页：⋯ → Export page as PNG / SVG。
 
 **Obsidian Sync 不同步插件？**
-`main.js` 约 6.3 MB，Obsidian Sync 标准版不同步超过 5 MB 的文件。请在每台设备上分别从社区插件目录安装 HandNote。
+`main.js` 约 6.5 MB，Obsidian Sync 标准版不同步超过 5 MB 的文件。请在每台设备上分别从社区插件目录安装 HandNote。
 
 **导入文档时旁边多了一个 `.handnote-layout.json`？**
 这是 Word / PowerPoint / Excel 的固定排版，让每台设备显示的页面完全一致。请让同步工具同步它。

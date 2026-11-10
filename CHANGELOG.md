@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.12.1 — 2026-11-11
+
+Built from the same sources as the private test builds 0.12.0-beta.1 … 0.12.1-beta.4 (tested on the
+iPad), public edition. Release notes: `docs/release-notes/0.12.1.md`.
+
+- **Ink on Markdown** (`src/inkmd/`): HandNote ink on ordinary `.md` notes inside Obsidian's own
+  CodeMirror editor. Header action + command toggle it per tab; reading view switches to editing.
+  Annotations in `HandNote annotations/<path>.handnote` (`annotation-path.ts`, `ink-file.ts`): same
+  version check, conflict copy, recovery journal and read-only damaged files as notes; follow
+  renames, kept on delete, second tab read-only. The `.md` file is never written.
+- Input: the HandNote input router (pan with inertia, pinch, palm rejection, two / three-finger tap
+  undo / redo); a shield over the text and every editable field forced read-only while an ink tool
+  is selected (no Scribble, no cursor from the Pencil); a finger tap forwards to the editor and
+  unlocks the line for typing until the keyboard closes or the Pencil touches down.
+- Zoom 50–800 %: the whole editor box is laid out at size / z and scaled, so CodeMirror measures in
+  one consistent scale (no scroll-anchor jump); pinch preview as a transform, commit keeps the line
+  and character under the fingers; free sideways pan (half a screen, or to the outermost
+  annotation) as a translate of the sizer and the canvases.
+- Tools: pens, shape pen with real shape / connector items and arrow heads, eraser, the HandNote
+  lasso (`LassoHost.features` hides Convert / AI), text boxes, images, shapes, laser; one undo
+  stack for ink and objects; *Clear all* clears ink and objects in one undo step.
+- Anchors: strokes (`a`) and items (`anchor`) keep `{line, text, top}` and follow their line
+  (`followLines`); re-found by line number and text after outside edits, never dropped when not
+  found. Highlighter strokes laid on text keep the covered characters (`sp`: `{s, e, t, oy, h}`) and
+  are re-laid per text row (`reflowSpans`); moving / resizing with the lasso turns them into ink.
+  Header field `annotates`. File format version unchanged.
+- **Shape pen**: a gently, one-sidedly bent line (sag ≥ 4.5 % of the chord, fit error < 55 % of the
+  sag, ≥ 85 % of the samples on one side) is a curve, checked before the line test
+  (`shape-recognition.ts`). Applies to notes too.
+
 ## 0.11.1 — 2026-11-05
 
 Built from the same sources as the private test builds 0.11.1-beta.2 … beta.6, public edition.

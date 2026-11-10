@@ -32,6 +32,15 @@ neat Chinese without any download.
 Yes, since 0.9.0: **Import document…** or right-click a file → **Annotate in HandNote**. Details
 below and in the [README](README.md#annotate-pdf-word-powerpoint-and-excel).
 
+### Can I write by hand on my Markdown notes?
+
+Yes, since 0.12.1. Tap the HandNote pen icon at the top right of a Markdown note (or run *Turn
+HandNote annotation on / off for the current Markdown note*) and write on it in Obsidian's own
+editor; a finger tap on the text lets you type. The `.md` file is never changed: the ink is saved in
+`HandNote annotations/<path of the note>.handnote`, follows its line when you add or delete lines
+above, and moves with the note when you rename it. The ink shows in the editing view only, and
+annotated Markdown notes cannot be exported as PNG / PDF yet.
+
 ### Is it free and open source?
 
 Yes. The code is MIT-licensed; there is no account, subscription or telemetry.
@@ -150,7 +159,7 @@ confirmation. See [PRIVACY.md](PRIVACY.md).
 ### Does HandNote sync with Obsidian Sync?
 
 Your notes (`.handnote` files) sync like any other file. The plugin itself: `main.js` is about
-6.3 MB because the recognition runtime is built in, and Obsidian Sync's Standard plan does not sync
+6.5 MB because the recognition runtime is built in, and Obsidian Sync's Standard plan does not sync
 files over 5 MB. With that plan, install HandNote on each device from Community plugins.
 
 ### Does it work on iPhone or Android?

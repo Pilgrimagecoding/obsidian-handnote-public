@@ -6,7 +6,7 @@ PowerPoint、Excel，在页面上手写批注。每一页都保存为仓库（Va
 
 - 官方插件页：<https://community.obsidian.md/plugins/handnote>
 - 源代码（MIT 许可）：<https://github.com/Pilgrimagecoding/obsidian-handnote-public>
-- 当前公开版本：0.9.1
+- 当前公开版本：0.12.1
 
 ![iPad 上用 Apple Pencil 在 HandNote 页面里书写（实拍）](images/ipad-01-writing.jpg)
 
@@ -18,6 +18,7 @@ PowerPoint、Excel，在页面上手写批注。每一页都保存为仓库（Va
 | [iPad 与 Apple Pencil 使用教程](ipad-apple-pencil.md) | 新建笔记、笔和工具栏、手势、页面与纸张、长按菜单 |
 | [手写转文字](handwriting-to-text.md) | 套索圈选、转换为文字、候选字、还原笔迹、本机识别 |
 | [文档导入与批注](documents.md) | PDF、Word、PowerPoint、Excel 的导入方法和真实支持范围 |
+| [在 Markdown 笔记上手写批注](markdown-ink.md) | 打开批注、Pencil 和手指的分工、工具、批注跟着文字走、保存位置、限制 |
 | [公式](formulas.md) | 用 LaTeX 输入公式、替换手写、复制为 Markdown |
 | [常见问题](faq.md) | 存储、同步、隐私、费用、离线等问题 |
 | [已知限制与兼容性](limitations.md) | 平台、版本、格式和识别的限制 |
@@ -39,6 +40,10 @@ macOS、Linux 上用鼠标、数位板或触屏书写。
 **支持文档批注吗？**
 支持。从 0.9.0 起可以导入 PDF、Word（.docx、.doc）、PowerPoint（.pptx）和 Excel（.xlsx），每一页变成
 一张可以手写的页面。原文件不会被修改，也不会上传。详见[文档导入与批注](documents.md)。
+
+**能直接在 Markdown 笔记上手写吗？**
+能，从 0.12.1 起。在 Markdown 笔记右上角点 HandNote 笔尖图标，就能在 Obsidian 的编辑器里手写批注，笔记照常可以编辑。
+`.md` 文件不会被改动，笔迹保存在 `HandNote annotations/` 文件夹里。详见[在 Markdown 笔记上手写批注](markdown-ink.md)。
 
 **有本地公式识别吗？**
 没有。公开版没有本机手写公式识别。可以用 LaTeX 输入公式（带实时预览），或者在设置里填写你自己的

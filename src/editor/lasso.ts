@@ -46,6 +46,8 @@ export interface LassoHost {
   copied?(plain: string): void;
   /** Pen / mouse held still at the start of a loop: open the page context menu there. */
   contextMenu?(r: PageRect, x: number, y: number): void;
+  /** Floating-bar actions the host offers (default: all). Ink on Markdown has no convert / AI yet. */
+  features?: { convert?: boolean; ai?: boolean };
 }
 
 export interface LassoSelection {
@@ -677,8 +679,8 @@ export class LassoController {
       const grouped = this.isGrouped(f);
       add(grouped ? 'ungroup' : 'group', t(grouped ? 'ungroup' : 'group'), () => (grouped ? this.ungroup() : this.group()));
       // Convert = recognise the ink itself (text / math / shapes); AI tools = vision-model features
-      if (f.strokes.some((s) => s.tool !== 'highlighter')) add('to-text', t('convertMenu'), (b) => this.h.action('convert', b), 'is-primary');
-      add('sparkles', t('aiToolsMenu'), (b) => this.h.action('ai', b));
+      if (this.h.features?.convert !== false && f.strokes.some((s) => s.tool !== 'highlighter')) add('to-text', t('convertMenu'), (b) => this.h.action('convert', b), 'is-primary');
+      if (this.h.features?.ai !== false) add('sparkles', t('aiToolsMenu'), (b) => this.h.action('ai', b));
     }
     const vw = this.h.viewport.clientWidth;
     const bw = bar.offsetWidth || 300;

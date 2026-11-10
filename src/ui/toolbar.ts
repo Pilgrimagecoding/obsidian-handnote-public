@@ -69,6 +69,8 @@ export interface ToolbarState {
   pageCount: number;
   /** Whiteboard (0.11): the page number becomes the zoom; prev / next step through frames. */
   board?: { zoom: number; frames: number };
+  /** 0.12 Ink on Markdown: no pages; the page number becomes the zoom (tap: fit width). */
+  markdown?: { zoom: number };
   readOnly: boolean;
   penColor: string;
   palette: string[];
@@ -152,6 +154,14 @@ export function luminance(hex: string): number {
  *  - Sub-bar: options of the selected tool in a floating pill below the top bar. Tapping the
  *    selected tool again hides / shows it.
  */
+/** Which tools a toolbar offers (0.12 Ink on Markdown shows only what works there). */
+export interface ToolbarOptions {
+  groups?: ToolGroup[];
+  penKinds?: PenKind[];
+  /** the line-style chip (dash / dot, stroke settings) */
+  strokeStyle?: boolean;
+}
+
 export class Toolbar {
   readonly el: HTMLElement;
   readonly sub: HTMLElement;
@@ -163,10 +173,15 @@ export class Toolbar {
   private pagesBtn: HTMLButtonElement;
   private pageLabel: HTMLElement;
   private statusEl: HTMLElement;
+  private right: HTMLElement;
   private subKey = '';
   private mode: InputMode = 'pen';
 
-  constructor(parent: HTMLElement, private readonly a: ToolbarActions) {
+  constructor(
+    parent: HTMLElement,
+    private readonly a: ToolbarActions,
+    private readonly opts: ToolbarOptions = {},
+  ) {
     this.el = el('div', 'hn-toolbar', parent);
     this.el.setAttribute('role', 'toolbar');
     const left = el('div', 'hn-group hn-left', this.el);
@@ -175,12 +190,13 @@ export class Toolbar {
     const center = el('div', 'hn-group hn-tools', this.el);
     this.pagesBtn = toolButton(center, 'pages', t('pages'), 'hn-pages-btn', (b) => a.onPages(b));
     el('span', 'hn-tools-sep', center);
-    for (const { g, icon, label } of GROUPS) {
+    for (const { g, icon, label } of GROUPS.filter((x) => !opts.groups || opts.groups.includes(x.g))) {
       const b = toolButton(center, icon, t(label), 'hn-tool', (btn) => a.onGroup(g, btn));
       b.dataset.group = g;
       this.groupBtns.set(g, b);
     }
     const right = el('div', 'hn-group hn-right', this.el);
+    this.right = right;
     this.prevBtn = toolButton(right, 'chevron-up', t('prevPage'), 'hn-prev', () => a.onPrev());
     this.pageLabel = el('button', 'hn-page-label', right, '1/1');
     (this.pageLabel as HTMLButtonElement).type = 'button';
@@ -193,6 +209,19 @@ export class Toolbar {
     toolButton(right, 'more', t('more'), 'hn-more-btn', (b) => a.onMore(b));
     this.sub = el('div', 'hn-subbar', parent);
     this.sub.addEventListener('pointerdown', (e) => e.stopPropagation());
+  }
+
+  /**
+   * 0.12 Ink on Markdown: no page button and no page navigation; a "Done" button leaves the
+   * annotation mode (back to the normal Markdown view).
+   */
+  setMarkdown(onDone: () => void): void {
+    this.el.classList.add('is-markdown');
+    const done = el('button', 'hn-done-btn', this.right, t('mdDone'));
+    done.type = 'button';
+    done.title = t('mdExit');
+    done.setAttribute('aria-label', t('mdExit'));
+    onTap(done, () => onDone());
   }
 
   setMode(mode: InputMode): void {
@@ -229,7 +258,11 @@ export class Toolbar {
     }
     this.undoBtn.disabled = !s.canUndo || s.readOnly;
     this.redoBtn.disabled = !s.canRedo || s.readOnly;
-    if (s.board) {
+    if (s.markdown) {
+      this.pageLabel.textContent = `${Math.round(s.markdown.zoom * 100)}%`;
+      this.pageLabel.title = t('fitWidth');
+      this.pageLabel.setAttribute('aria-label', t('fitWidth'));
+    } else if (s.board) {
       this.prevBtn.disabled = this.nextBtn.disabled = s.board.frames === 0;
       this.pageLabel.textContent = `${Math.round(s.board.zoom * 100)}%`;
       this.pageLabel.title = t('board');
@@ -277,17 +310,19 @@ export class Toolbar {
     const a = this.a;
     const kinds = el('div', 'hn-sub-group', this.sub);
     const current: PenKind = s.drawShape ? 'shapepen' : ((s.tool === 'ballpoint' ? 'fountain' : s.tool) as PenKind);
-    for (const k of ['fountain', 'pencil', 'highlighter', 'shapepen'] as PenKind[]) {
+    for (const k of this.opts.penKinds ?? (['fountain', 'pencil', 'highlighter', 'shapepen'] as PenKind[])) {
       const b = toolButton(kinds, k, t(k), 'hn-pen-kind', (btn) => a.onPenKind(k, btn));
       b.dataset.kind = k;
       setSelected(b, k === current);
     }
     this.sep();
-    // line-style chip: a sample of the current style + chevron (opens "stroke settings")
-    const style = control(this.sub, 'hn-stroke-style', t('strokeSettings'), (b) => a.onStrokeStyle(b));
-    style.dataset.dash = s.penDash;
-    el('span', `hn-dash-sample is-${s.penDash}`, style);
-    setHnIcon(el('span', 'hn-ic hn-chev', style), 'chevron-down');
+    if (this.opts.strokeStyle !== false) {
+      // line-style chip: a sample of the current style + chevron (opens "stroke settings")
+      const style = control(this.sub, 'hn-stroke-style', t('strokeSettings'), (b) => a.onStrokeStyle(b));
+      style.dataset.dash = s.penDash;
+      el('span', `hn-dash-sample is-${s.penDash}`, style);
+      setHnIcon(el('span', 'hn-ic hn-chev', style), 'chevron-down');
+    }
     const widths = el('div', 'hn-sub-group hn-widths', this.sub);
     s.widthPresets.forEach((w, i) => {
       const mm = w / MM;

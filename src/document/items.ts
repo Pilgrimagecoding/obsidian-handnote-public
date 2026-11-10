@@ -27,6 +27,11 @@ export interface ItemBase {
   rot?: number;
   /** Group id (v4). */
   g?: string;
+  /**
+   * Ink on Markdown (0.12): the line of the note the item belongs to (see Stroke.anchor). The
+   * item's position is kept for the layout of today; the anchor moves it when its line moves.
+   */
+  anchor?: { line: number; text: string; top: number };
 }
 
 export interface TextItem extends ItemBase {

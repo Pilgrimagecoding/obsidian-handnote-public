@@ -28,7 +28,7 @@ HandNote 是 Obsidian 官方社区插件目录里的插件，在 Obsidian 内直
 每个文件的 SHA-256 写在版本说明里，版本还附有 GitHub 构建来源证明（attestation），可以用来核对下载的
 文件是否完整。
 
-> 使用 Obsidian Sync 标准版时注意：`main.js` 约 6.3 MB（识别运行库内置在插件里），标准版不同步超过 5 MB
+> 使用 Obsidian Sync 标准版时注意：`main.js` 约 6.5 MB（识别运行库内置在插件里），标准版不同步超过 5 MB
 > 的文件。请在每台设备上分别从社区插件目录安装 HandNote，笔记本身照常同步。
 
 ## 新建第一篇手写笔记

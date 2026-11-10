@@ -206,6 +206,8 @@ function strokeToJson(s: Stroke): string {
   if (s.cut) o.cut = s.cut;
   if (s.dash) o.dash = s.dash;
   if (s.g) o.g = s.g;
+  if (s.anchor) o.a = { l: s.anchor.line, t: s.anchor.text, y: Math.round(s.anchor.top * 100) / 100 };
+  if (s.span) o.sp = { s: s.span.s, e: s.span.e, t: s.span.t, oy: Math.round(s.span.oy * 100) / 100, h: Math.round(s.span.h * 100) / 100 };
   // the ink as drawn (0.12): what is rendered; older versions ignore it and rebuild from pts
   if (s.geom && s.geom.xs.length) {
     o.genc = 'g1';
@@ -326,6 +328,7 @@ export function serializeDocument(doc: HandNoteDocument): string {
     modified: doc.modified,
     revision: doc.revision,
     device: doc.device,
+    ...(doc.annotates ? { annotates: doc.annotates } : {}),
     // imported documents (v6) are in the header line, so line-based recovery keeps them
     ...(sources.length ? { sources: sources.map((x) => ({ id: x.id, kind: x.kind, path: x.path, name: x.name, size: x.size, sha256: x.sha256, pages: x.pages, imported: x.imported, ...(x.layout ? { layout: x.layout } : {}) })) } : {}),
   };
@@ -408,8 +411,32 @@ export function validateStroke(o: unknown, warnings: string[]): Stroke | null {
     ...(typeof r.cut === 'number' && r.cut > 0 && r.cut <= 3 ? { cut: Math.round(r.cut) } : {}),
     ...(r.dash === 'dash' || r.dash === 'dot' ? { dash: r.dash } : {}),
     ...(groupId(r.g) ? { g: r.g as string } : {}),
+    ...storedAnchor(r.a),
+    ...storedSpan(r.sp),
     ...storedGeometry(r),
   };
+}
+
+/** Ink on Markdown: the characters a highlighter covers (optional; ignored by older versions). */
+function storedSpan(v: unknown): { span?: { s: number; e: number; t: string; oy: number; h: number } } {
+  if (!v || typeof v !== 'object') return {};
+  const a = v as Record<string, unknown>;
+  const s = num(a.s, NaN);
+  const e = num(a.e, NaN);
+  const oy = num(a.oy, 0);
+  const h = num(a.h, NaN);
+  if (!(s >= 0 && e > s && e - s <= 100_000) || typeof a.t !== 'string' || !(h > 0 && h < 1000) || Math.abs(oy) > 1000) return {};
+  return { span: { s: Math.round(s), e: Math.round(e), t: a.t.slice(0, 400), oy, h } };
+}
+
+/** Ink on Markdown: the line a stroke belongs to (optional; ignored by older versions). */
+function storedAnchor(v: unknown): { anchor?: { line: number; text: string; top: number } } {
+  if (!v || typeof v !== 'object') return {};
+  const a = v as Record<string, unknown>;
+  const line = num(a.l, 0);
+  const top = num(a.y, NaN);
+  if (!(line >= 1 && line <= 10_000_000) || !Number.isFinite(top) || typeof a.t !== 'string') return {};
+  return { anchor: { line: Math.round(line), text: a.t.slice(0, 200), top } };
 }
 
 /** The stored ink (0.12) when present and well-formed; otherwise the stroke is built from its samples. */
@@ -470,7 +497,7 @@ export function validateItem(o: unknown, warnings: string[]): Item | null {
   const r = o as Record<string, unknown>;
   const L = ITEM_LIMITS.coord;
   const cl = (v: number) => Math.min(L, Math.max(-L, v));
-  const base: { id: string; x: number; y: number; w: number; h: number; created: number; rot?: number; g?: string } = {
+  const base: { id: string; x: number; y: number; w: number; h: number; created: number; rot?: number; g?: string; anchor?: { line: number; text: string; top: number } } = {
     id: str(r.id, newId('i')),
     x: cl(num(r.x, 0)),
     y: cl(num(r.y, 0)),
@@ -480,6 +507,10 @@ export function validateItem(o: unknown, warnings: string[]): Item | null {
   };
   if (finite(r.rot) && Math.abs(r.rot) > 1e-6) base.rot = normAngle(r.rot);
   if (groupId(r.g)) base.g = r.g as string;
+  const an = r.anchor as Record<string, unknown> | undefined;
+  if (an && typeof an === 'object' && finite(an.line) && an.line >= 1 && an.line <= 10_000_000 && typeof an.text === 'string' && finite(an.top) && Math.abs(an.top) < 1e7) {
+    base.anchor = { line: Math.round(an.line), text: an.text.slice(0, 200), top: an.top };
+  }
   const color = (v: unknown, fb: string) => (typeof v === 'string' && COLOR_RE.test(v) ? v : fb);
   if (r.type === 'text') {
     return {
@@ -752,6 +783,7 @@ function validateDocument(o: unknown, warnings: string[]): { doc: HandNoteDocume
       modified: num(r.modified, Date.now()),
       revision: Math.max(0, Math.floor(num(r.revision, 0))),
       device: str(r.device, ''),
+      ...(typeof r.annotates === 'string' && r.annotates.length <= 1024 && /\.md$/i.test(r.annotates) ? { annotates: r.annotates } : {}),
       pages,
       ...(assets ? { assets } : {}),
       ...(sources ? { sources } : {}),

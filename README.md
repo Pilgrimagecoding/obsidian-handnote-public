@@ -5,9 +5,9 @@
 
 **HandNote** is an [Obsidian](https://obsidian.md) community plugin for handwritten notes, made
 first for the iPad and Apple Pencil (a finger, a mouse or a pen tablet work too). Write in notebook
-pages, select with a lasso, convert handwriting to editable text on your device, and annotate PDF,
-Word, PowerPoint and Excel files by hand. Every page is a plain `.handnote` file in your vault. Free
-and open source (MIT).
+pages, select with a lasso, convert handwriting to editable text on your device, write directly on
+your Markdown notes, and annotate PDF, Word, PowerPoint and Excel files by hand. Every page is a plain
+`.handnote` file in your vault. Free and open source (MIT).
 
 **[Install from the Obsidian community directory](https://community.obsidian.md/plugins/handnote)** ·
 [Releases](https://github.com/Pilgrimagecoding/obsidian-handnote-public/releases) ·
@@ -62,6 +62,21 @@ note stores only a reference plus your ink. Macros never run, nothing is uploade
 contains that HandNote cannot show (charts, animations, footnotes…) is listed when you import it.
 
 ![A PowerPoint slide about eigenvalues imported into HandNote, with a highlighted bullet, a circled formula box and handwritten margin notes "exam!", "key idea" and "see page 2"](assets/screenshots/desktop/07-import-annotate.png)
+
+## Write on your Markdown notes
+
+New in 0.12.1: tap the HandNote pen icon at the top right of any Markdown note and write on it with the
+same pens, highlighter, shape pen, eraser, lasso, text boxes, images and shapes as in a HandNote
+note, right inside Obsidian's editor. The note stays editable: the Apple Pencil only writes, and a
+finger tap on the text lets you type there. Pan into the margins and zoom from 50 % to 800 % with
+the text laid out sharp at every size.
+
+Annotations follow the text: ink, text boxes and images move with their line when you add or delete
+lines above, and a highlight follows the words it covers. They are saved in a separate file under
+`HandNote annotations/`, so **your `.md` file is never changed**; an annotation whose line cannot
+be found stays where it was and is never deleted. The ink shows in the editing view, not in reading
+view, and there is no PNG / PDF export of annotated Markdown notes yet
+([details](docs/release-notes/0.12.1.md)).
 
 ## Formulas as LaTeX
 
@@ -141,6 +156,8 @@ or newer.
   model download (15.8 MB / 7.5 MB). A built-in offline engine also reads neat Chinese.
 - **Can I annotate documents?** Yes, since 0.9.0: PDF, Word (.docx, .doc), PowerPoint (.pptx) and
   Excel (.xlsx). The original file is not changed and nothing is uploaded.
+- **Can I write on my Markdown notes?** Yes, since 0.12.1: by hand, in Obsidian's own editor. The
+  `.md` file is not changed; the ink is saved beside it in `HandNote annotations/`.
 - **Is there an infinite canvas?** Yes, since 0.11.0: infinite whiteboards, and any note with
   pages can be turned into one.
 - **Is there on-device handwritten-math recognition?** No. Type formulas as LaTeX with a live
@@ -227,8 +244,11 @@ purpose, data sent, cost, offline behaviour — is listed in [PRIVACY.md](PRIVAC
   and the curve shapes added in 0.11 use format 7: HandNote 0.10 and older open them read-only.
 - Handwriting written with 0.11 or newer also stores the drawn ink, so those notes are about
   1.6–1.9 times larger than before.
+- Ink on Markdown notes shows only in the editing view (not in reading view or embeds), cannot be
+  exported as PNG / PDF yet, and its lasso has no Convert / AI. Ink follows its line, not the shape
+  of the sentence; on a device with another font or width its horizontal position can differ.
 - Phone layouts are not optimised.
-- `main.js` is about 6.3 MB because the recognition runtime is built in. Obsidian Sync's Standard
+- `main.js` is about 6.5 MB because the recognition runtime is built in. Obsidian Sync's Standard
   plan does not sync files over 5 MB, so with that plan install HandNote on each device from
   Community plugins (your notes sync as usual).
 

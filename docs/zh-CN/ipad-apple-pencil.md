@@ -96,6 +96,11 @@ Apple Pencil 不受影响，长按不会打断书写。iPadOS 在 App 读取剪�
 ⋯ → **Export page as PNG** 或 **Export page as SVG**，或者在命令面板运行
 「Export current page as PNG / SVG」，把当前页导出成图片。
 
+## 9. 直接在 Markdown 笔记上手写（0.12.1 新增）
+
+打开任意 Markdown 笔记，点右上角的 HandNote 笔尖图标，就能在笔记上直接用 Pencil 手写批注；手指点一下正文可以照常打字。
+`.md` 文件不会被改动。用法见[在 Markdown 笔记上手写批注](markdown-ink.md)。
+
 ## 常见问题
 
 - **字迹有延迟或断笔**：先确认 Obsidian 和 iPadOS 是最新版本；在 **设置 → HandNote** 里可以换用

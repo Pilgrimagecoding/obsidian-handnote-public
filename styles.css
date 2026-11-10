@@ -2763,3 +2763,173 @@ textarea.hn-input {
 .hn-list-row.is-bookmarked .hn-row-icon {
   color: #e5484d;
 }
+
+/* ---------------------------------------------------------------------------------------------
+ * 0.12 Ink on Markdown: HandNote ink in Obsidian's own Markdown editor
+ * ------------------------------------------------------------------------------------------- */
+.view-content.hn-ink-active {
+  display: flex;
+  flex-direction: column;
+}
+.view-content.hn-ink-active > .markdown-source-view {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+}
+/* the toolbar above the editor; the tool options float below it, over the text */
+.hn-editor.hn-inkbar {
+  position: relative;
+  inset: auto;
+  flex: 0 0 auto;
+  display: block;
+  overflow: visible;
+  z-index: 20;
+}
+.hn-editor.hn-inkbar.is-readonly .hn-tools,
+.hn-editor.hn-inkbar.is-readonly .hn-undo,
+.hn-editor.hn-inkbar.is-readonly .hn-redo {
+  opacity: 0.4;
+  pointer-events: none;
+}
+.hn-ink-clip {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 3;
+}
+.hn-ink-canvas {
+  position: absolute;
+  pointer-events: none;
+}
+/* an ink tool is selected: the clip takes the pointer (no text under the Pencil for Scribble) */
+.hn-ink-clip.hn-ink-shield {
+  pointer-events: auto;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+/* pinch: the editor box is scaled as one layer until the fingers lift */
+.cm-editor.hn-ink-pinching {
+  will-change: transform;
+}
+/* with the shield up, every touch is HandNote's (pan / pinch by the input router, as in a note) */
+.hn-ink-clip.hn-ink-shield {
+  touch-action: none;
+}
+.cm-scroller.hn-ink-scroller.hn-ink-noscroll {
+  touch-action: none;
+}
+/* sideways the note is moved by HandNote (it can go beside the note, to ink in the margins) */
+.cm-scroller.hn-ink-scroller {
+  overflow-x: hidden;
+}
+.view-content.hn-ink-active {
+  position: relative;
+}
+/* text boxes, images, shapes: the object overlay over the visible part of the note */
+.hn-editor.hn-ink-objhost {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+  display: block;
+  overflow: hidden;
+  background: transparent;
+}
+.hn-editor.hn-ink-poproot {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  pointer-events: none;
+  display: block;
+  overflow: visible;
+  background: transparent;
+}
+.hn-ink-poproot > .hn-popover {
+  pointer-events: auto;
+}
+/* while a pinch shows its preview the overlays wait (they are placed in screen px) */
+.hn-ink-previewing > .hn-ink-objhost,
+.hn-ink-previewing > .hn-ink-laserhost {
+  visibility: hidden;
+}
+.cm-editor.hn-ink-previewbox {
+  transform-origin: 0 0;
+}
+/* zoomed: the editor box is laid out smaller and scaled up (see layoutZoom) */
+.cm-editor.hn-ink-zoombox {
+  overflow: hidden;
+  transform-origin: 0 0;
+  flex: none !important;
+}
+.hn-ink-laserhost {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 6;
+  overflow: hidden;
+}
+.hn-ink-laserhost .hn-laser {
+  position: absolute;
+}
+.hn-editor .hn-ps-menu.hn-ink-menu {
+  position: fixed;
+  z-index: var(--layer-menu, 65);
+}
+.hn-ink-selbar {
+  position: absolute;
+  z-index: 4;
+  pointer-events: auto;
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 10px;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+}
+.hn-ink-selbar .hn-ink-selbtn {
+  height: 32px;
+  padding: 0 12px;
+  color: #e5483c;
+}
+.view-content.hn-ink-active {
+  overflow: hidden;
+}
+/* an ink tool is selected: the Pencil does not select text */
+.hn-ink-locked .cm-content {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+.cm-sizer.hn-ink-zoomed {
+  transform-origin: 0 0;
+  margin-right: 0 !important;
+  flex-shrink: 0;
+}
+.hn-editor.is-markdown .hn-pages-btn,
+.hn-editor.is-markdown .hn-tools > .hn-tools-sep:first-of-type,
+.hn-editor.is-markdown .hn-prev,
+.hn-editor.is-markdown .hn-next {
+  display: none;
+}
+.hn-editor button.hn-done-btn {
+  height: 30px;
+  min-height: 0;
+  margin-left: 4px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 15px;
+  background: var(--hn-accent, var(--interactive-accent));
+  box-shadow: none;
+  color: var(--text-on-accent, #fff);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.view-action.hn-md-action.is-active {
+  color: var(--interactive-accent);
+  background-color: var(--background-modifier-hover);
+}

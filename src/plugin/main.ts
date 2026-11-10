@@ -44,6 +44,7 @@ import { sanitizePluginSettings, type HandNotePluginSettings } from './plugin-se
 import { EXTENSION, HandNoteView, VIEW_TYPE } from './view';
 import { DocumentImporter, IMPORT_EXTENSIONS } from './import';
 import { ensureDocPage } from '../rendering/doc-layer';
+import { MdInkManager } from '../inkmd/md-ink-manager';
 
 export default class HandNotePlugin extends Plugin {
   /** Markdown embeds of handwritten notes (exposed for tests: mount counter). */
@@ -55,6 +56,7 @@ export default class HandNotePlugin extends Plugin {
   local!: LocalRecognition;
   handFont!: HandFont;
   importer!: DocumentImporter;
+  mdInk: MdInkManager | null = null;
   private settingsTimer: number | null = null;
 
   async onload(): Promise<void> {
@@ -139,6 +141,9 @@ export default class HandNotePlugin extends Plugin {
     this.handFont = new HandFont(this.app.vault.adapter, dir);
     void this.handFont.load();
     this.registerView(VIEW_TYPE, (leaf) => new HandNoteView(leaf, this));
+    // 0.12 Ink on Markdown: HandNote ink in Obsidian's own Markdown editor
+    this.mdInk = new MdInkManager(this);
+    this.mdInk.start();
     try {
       this.registerExtensions([EXTENSION], VIEW_TYPE);
     } catch (e) {
@@ -308,6 +313,7 @@ export default class HandNotePlugin extends Plugin {
     // switching apps): timers do not run while iPadOS has the app suspended.
     const flushAll = () => {
       for (const v of this.views()) void v.flush();
+      void this.mdInk?.flushAll();
     };
     this.registerDomEvent(document, 'visibilitychange', () => {
       if (document.visibilityState === 'hidden') flushAll();
@@ -319,6 +325,7 @@ export default class HandNotePlugin extends Plugin {
 
   onunload(): void {
     for (const v of this.views()) void v.flush();
+    void this.mdInk?.flushAll();
     if (this.settingsTimer !== null) {
       window.clearTimeout(this.settingsTimer);
       void this.saveData(this.settings);
@@ -355,6 +362,7 @@ export default class HandNotePlugin extends Plugin {
   /** Push changed editor settings (tool, color, width...) to all open editors. */
   broadcastSettings(except: HandNoteView | null): void {
     for (const v of this.views()) if (v !== except) v.editor?.updateSettings(this.settings.editor);
+    this.mdInk?.settingsUpdated();
   }
 
   // ---------------------------------------------------------------------------------------------

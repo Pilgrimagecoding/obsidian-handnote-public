@@ -73,6 +73,26 @@ export interface ShapeTolerance {
  * line drawn by hand bows by up to ~10 % and was taken for a curve.
  */
 const CURVE_MIN_BEND = 0.1;
+/** A smooth, one-sided bow of at least this fraction of the chord is a curve (0.12.0-beta.9; lines that wobble or bow by up to ~3 % stay lines). */
+const CURVE_GENTLE_BEND = 0.045;
+
+/** Share of the stroke's middle (by count) on the side of its chord where most of it lies. */
+function oneSided(pts: P[], a: P, b: P, chord: number): number {
+  const ux = (b.x - a.x) / chord;
+  const uy = (b.y - a.y) / chord;
+  let pos = 0;
+  let neg = 0;
+  const tol = chord * 0.01;
+  const i0 = Math.floor(pts.length * 0.1);
+  const i1 = Math.ceil(pts.length * 0.9);
+  for (let i = i0; i < i1; i++) {
+    const c = (pts[i].x - a.x) * uy - (pts[i].y - a.y) * ux;
+    if (c > tol) pos++;
+    else if (c < -tol) neg++;
+  }
+  const n = Math.max(1, i1 - i0);
+  return Math.max(pos, neg) / n;
+}
 
 const SMALL = 40;
 const LARGE = 800;
@@ -848,10 +868,24 @@ function recognizeShaft(pts: P[], T: ShapeTolerance): RecognizedShape | null {
   let maxDev = 0;
   for (const p of pts) maxDev = Math.max(maxDev, segDist(p, first, last));
   const ab = { a: [first.x, first.y] as [number, number], b: [last.x, last.y] as [number, number] };
+  const corner = hasCorner(pts, L);
+  // a gentle arc (0.12, maintainer feedback: "a slightly bent line becomes a straight line"): it
+  // bows out by at least CURVE_GENTLE_BEND of its chord, the bow is smooth (a quadratic explains it
+  // with a small residual) and the stroke stays on one side of its chord — a wobbly straight line
+  // crosses its chord and its quadratic barely bows
+  if (!corner && maxDev / chord < T.lineDev * 1.6) {
+    const { c, err } = fitQuadratic(pts);
+    const mid = qp(first, c, last, 0.5);
+    const sag = segDist(mid, first, last);
+    if (sag / chord >= CURVE_GENTLE_BEND && err < sag * 0.55 && err / chord < T.curveErr && oneSided(pts, first, last, chord) >= 0.85) {
+      const box = bbox([first, last, mid, qp(first, c, last, 0.25), qp(first, c, last, 0.75)]);
+      return { kind: 'curve', ...box, ...ab, c: [c.x, c.y] };
+    }
+  }
   // straight line: small deviation relative to the chord
   if (maxDev / chord < T.lineDev && L / chord < T.lineLen) return { kind: 'line', ...bbox([first, last]), ...ab };
   // smooth arc: no corner anywhere and a quadratic fits within a few percent of the chord
-  if (!hasCorner(pts, L)) {
+  if (!corner) {
     const { c, err } = fitQuadratic(pts);
     const mid = qp(first, c, last, 0.5);
     const sag = segDist(mid, first, last);

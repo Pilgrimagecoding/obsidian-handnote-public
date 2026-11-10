@@ -76,6 +76,38 @@ export interface Stroke {
   g?: string;
   /** The ink as drawn (0.12); absent for older strokes and eraser fragments (built from samples). */
   geom?: StoredGeometry;
+  /** Ink on Markdown (0.12): the line of the note the stroke belongs to (see inkmd/anchor.ts). */
+  anchor?: StrokeAnchor;
+  /**
+   * Ink on Markdown (0.12.0-beta.10): a highlighter stroke laid on text — it follows these
+   * characters of its anchor line (wherever they wrap), not only the line.
+   */
+  span?: TextSpan;
+}
+
+/**
+ * The characters a highlighter covers: offsets in its anchor line, the covered text (to find it
+ * again after edits made while the note was not annotated), and the band: its centre relative to
+ * the middle of the text row and its height (document px).
+ */
+export interface TextSpan {
+  s: number;
+  e: number;
+  t: string;
+  oy: number;
+  h: number;
+}
+
+/**
+ * Ink on Markdown: a stroke is written next to a line of the note. `line` (1-based) and `text`
+ * (the start of that line) find the line again after the note was edited elsewhere; `top` is where
+ * the line was (document px) when the stroke's coordinates were taken. The stroke is drawn moved by
+ * (where the line is now − top), so it follows its line when text is added or removed above it.
+ */
+export interface StrokeAnchor {
+  line: number;
+  text: string;
+  top: number;
 }
 
 /** Dashed / dotted line style of ink strokes and connectors. Solid is the absence of the field. */
@@ -187,6 +219,12 @@ export interface HandNoteDocument {
   assets?: Record<string, Asset>;
   /** Imported documents (v6), by id. Only sources referenced by a page are written. */
   sources?: Record<string, DocSource>;
+  /**
+   * 0.12 Ink on Markdown: the vault path of the Markdown note these annotations belong to. The
+   * note's one page is the rendered note; the Markdown file itself is never written. Optional
+   * header field: older plugins ignore it (they show the ink on a blank page).
+   */
+  annotates?: string;
 }
 
 export interface PaperPreset {
