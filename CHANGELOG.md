@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- **Open notes where you left off** (`src/storage/view-state.ts`): a note reopens on the page last
+  viewed. This device's exact view (page, place in the page, zoom; the camera on a whiteboard) is
+  kept in `view-local.json`; only the page goes to `view-sync.json`, which syncs with the plugin
+  folder, so another device opens the note on that page at its own zoom. The newer of the two wins.
+  Keyed by the document id (follows renames); pages found by id, else by position. A page change is
+  written at once (overlapping writes merged), moves within a page after ~1 s, the synced page after
+  ~2 s, and everything on close, when the app is hidden and on quit. The synced file is merged with
+  the copy on disk before each write. Nothing is written to the notes. Setting *Open notes where you
+  left off* (on by default).
+
 ## 0.12.3 — 2026-11-17
 
 - Raise the PDF import limit from 200 MiB to 512 MiB and reduce peak memory use by hashing in chunks and releasing PDF inspection resources before saving a new copy.

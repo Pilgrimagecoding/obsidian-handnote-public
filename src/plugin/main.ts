@@ -38,6 +38,7 @@ import { openSelfTest, renderLocalSettings } from './local-settings';
 import { runSelfTest, selfTestReport } from '../local/selftest';
 import { imageMime } from './mime';
 import { RecoveryStore } from '../storage/recovery';
+import { ViewStateStore } from '../storage/view-state';
 import { defaultEditorSettings } from '../editor/settings';
 import { EmbedManager } from './embed';
 import { sanitizePluginSettings, type HandNotePluginSettings } from './plugin-settings';
@@ -51,6 +52,8 @@ export default class HandNotePlugin extends Plugin {
   embeds!: EmbedManager;
   settings!: HandNotePluginSettings;
   recovery!: RecoveryStore;
+  /** 0.13: where each note was last viewed */
+  viewState!: ViewStateStore;
   ai!: AIService;
   recognition!: HandwritingRecognitionService;
   local!: LocalRecognition;
@@ -65,6 +68,8 @@ export default class HandNotePlugin extends Plugin {
     await this.saveData(this.settings);
     const dir = normalizePath(`${this.app.vault.configDir}/plugins/${this.manifest.id}`);
     this.recovery = new RecoveryStore(this.app.vault.adapter, dir, this.settings.backupsPerNote);
+    this.viewState = new ViewStateStore(this.app.vault.adapter, dir);
+    await this.viewState.load();
 
     // Images in notes are vault attachments; load them as blob URLs (same-origin, so PNG export
     // and canvas reads are not blocked by a tainted canvas).
@@ -312,8 +317,13 @@ export default class HandNotePlugin extends Plugin {
     // Flush unsaved strokes when the app is backgrounded (iPad home gesture, lock screen,
     // switching apps): timers do not run while iPadOS has the app suspended.
     const flushAll = () => {
-      for (const v of this.views()) void v.flush();
+      for (const v of this.views()) {
+        // the view is reported on the next frame, which does not come once the app is hidden
+        v.saveViewState();
+        void v.flush();
+      }
       void this.mdInk?.flushAll();
+      void this.viewState.flush();
     };
     this.registerDomEvent(document, 'visibilitychange', () => {
       if (document.visibilityState === 'hidden') flushAll();
@@ -324,8 +334,12 @@ export default class HandNotePlugin extends Plugin {
   }
 
   onunload(): void {
-    for (const v of this.views()) void v.flush();
+    for (const v of this.views()) {
+      v.saveViewState();
+      void v.flush();
+    }
     void this.mdInk?.flushAll();
+    void this.viewState?.flush();
     if (this.settingsTimer !== null) {
       window.clearTimeout(this.settingsTimer);
       void this.saveData(this.settings);
@@ -711,6 +725,7 @@ class HandNoteSettingTab extends PluginSettingTab {
         }),
     );
     toggle(containerEl, 'autoAddPage', 'autoAddPageDesc', () => s.editor.pullToAddPage, (v) => (s.editor.pullToAddPage = v));
+    toggle(containerEl, 'resumeLastPage', 'resumeLastPageDesc', () => s.editor.resumeLastPage, (v) => (s.editor.resumeLastPage = v));
 
     section('set.writing');
     new Setting(containerEl)

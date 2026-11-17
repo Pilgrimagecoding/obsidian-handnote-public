@@ -79,8 +79,10 @@ export class HandNoteView extends FileView {
   }
 
   async onClose(): Promise<void> {
+    this.saveViewState();
     await this.flush();
     this.destroyEditor();
+    await this.plugin.viewState.flush();
   }
 
   async onLoadFile(file: TFile): Promise<void> {
@@ -90,10 +92,11 @@ export class HandNoteView extends FileView {
     const text = await this.app.vault.read(file);
     if (token !== this.loadToken) return;
     let doc: HandNoteDocument;
+    const isNew = text.trim() === '';
     this.readOnly = false;
     this.recovered = false;
     this.backedUp = false;
-    if (text.trim() === '') {
+    if (isNew) {
       doc = this.newDocument();
     } else {
       try {
@@ -122,13 +125,52 @@ export class HandNoteView extends FileView {
     this.lastWrittenRevision = doc.revision;
     this.dirty = false;
     this.mountEditor(doc);
+    this.restoreLastView(doc, isNew, token);
     await this.checkJournal(doc);
   }
 
   async onUnloadFile(_file: TFile): Promise<void> {
+    this.saveViewState();
     await this.flush();
     this.destroyEditor();
     this.doc = null;
+    await this.plugin.viewState.flush();
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Last viewed page (0.13)
+  // ---------------------------------------------------------------------------------------------
+
+  /**
+   * Open the note where it was last viewed: on this device, or the page another device viewed
+   * later. Uses what is known at once (no wait), then reads the synced file again in the background
+   * and follows a newer page from another device if the view was not moved meanwhile.
+   */
+  private restoreLastView(doc: HandNoteDocument, isNew: boolean, token: number): void {
+    const editor = this.editor;
+    // a damaged note opened read-only: its view is never recorded (it must not replace the real one)
+    if (!editor || this.recovered) return;
+    if (isNew || !this.plugin.settings.editor.resumeLastPage) {
+      editor.restoreView();
+      return;
+    }
+    const store = this.plugin.viewState;
+    const local = store.local(doc.id);
+    const synced = store.synced(doc.id);
+    editor.restoreView(local, synced);
+    void store.refreshSynced().then(() => {
+      // another note was opened in this tab meanwhile, or the user moved the view
+      if (token !== this.loadToken || this.editor !== editor || !editor.viewUntouched) return;
+      const fresh = store.synced(doc.id);
+      if (fresh && (!synced || fresh.at > synced.at)) editor.restoreView(local, fresh);
+    });
+  }
+
+  /** Record the current view now (the note is closing). Nothing before the last view was restored. */
+  saveViewState(): void {
+    const id = this.doc?.id;
+    const v = this.editor?.viewRestored ? this.editor.getViewState() : null;
+    if (id && v && this.plugin.settings.editor.resumeLastPage) this.plugin.viewState.record(id, v);
   }
 
   private newDocument(): HandNoteDocument {
@@ -148,6 +190,10 @@ export class HandNoteView extends FileView {
       isMobileApp: Platform.isMobileApp,
       notify: (msg) => new Notice(msg, 4000),
       onChange: () => this.markDirty(),
+      onViewChange: (v) => {
+        const id = this.doc?.id;
+        if (id && this.plugin.settings.editor.resumeLastPage) this.plugin.viewState.record(id, v);
+      },
       onSettingsChange: (s) => {
         this.plugin.settings.editor = s;
         this.plugin.queueSaveSettings();

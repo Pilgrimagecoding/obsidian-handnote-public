@@ -5,6 +5,8 @@
 import { HandNoteEditor } from '../../src/editor/handnote-editor';
 import { defaultEditorSettings, sanitizeEditorSettings } from '../../src/editor/settings';
 import { createDocument } from '../../src/document/model';
+import { createBoardDocument } from '../../src/document/board';
+import type { ViewSnapshot } from '../../src/storage/view-state';
 import { parseDocument, serializeDocument } from '../../src/document/codec';
 import { setLanguage } from '../../src/ui/i18n';
 import { AIService, defaultAISettings, type AISettings } from '../../src/ai/service';
@@ -228,6 +230,29 @@ const editor = new HandNoteEditor(container, loadDoc(), settings, {
   mathCase: (i: number, x = 80, y = 140, size = 30) => ({ name: MATH_CASES[i].name, latex: MATH_CASES[i].latex, strokes: mathInk(MATH_CASES[i].node, { x, y, size, seed: 5 + i, jitter: 0.6 }) }),
   selfTest: async () => selfTestReport(await runSelfTest(local, () => undefined)),
   editor,
+  /**
+   * 0.13: a second editor over the lab (own container) for the last-viewed-page tests: `pages`
+   * pages (0 = whiteboard), optionally created hidden. Returns the editor and the views it reports.
+   */
+  viewEditor: (pages: number, opts: { hidden?: boolean; doc?: string } = {}) => {
+    const host = document.createElement('div');
+    host.className = 'hn-view-test';
+    host.style.cssText = `position:fixed;inset:0;z-index:50;background:#fff;display:${opts.hidden ? 'none' : 'block'}`;
+    document.body.appendChild(host);
+    const doc = opts.doc ? parseDocument(opts.doc).doc : pages === 0 ? createBoardDocument() : createDocument({ pages });
+    const views: ViewSnapshot[] = [];
+    const ed = new HandNoteEditor(host, doc, settings, { onChange() {}, onSettingsChange() {}, onViewChange: (v) => views.push(v) });
+    return {
+      editor: ed,
+      views,
+      show: () => (host.style.display = 'block'),
+      close: () => {
+        ed.destroy();
+        host.remove();
+      },
+      serialize: () => serializeDocument(ed.getDocument()),
+    };
+  },
   serialize: () => serializeDocument(editor.getDocument()),
   saves: () => saves,
   exports: () => exports,

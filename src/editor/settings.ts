@@ -133,6 +133,8 @@ export interface EditorSettings {
   newPageBackground: BackgroundKind;
   /** 0.10: pulling past the bottom of the last page adds a page (GoodNotes-style). */
   pullToAddPage: boolean;
+  /** 0.13: open each note on the page last viewed (this device's view, or the synced page). */
+  resumeLastPage: boolean;
 }
 
 /** Eraser radius in screen px for each size step. */
@@ -185,6 +187,7 @@ export function defaultEditorSettings(): EditorSettings {
     newPagePaper: 'a4',
     newPageBackground: 'ruled',
     pullToAddPage: true,
+    resumeLastPage: true,
   };
 }
 
@@ -306,6 +309,7 @@ export function sanitizeEditorSettings(raw: unknown): EditorSettings {
     newPagePaper: typeof r.newPagePaper === 'string' ? r.newPagePaper : d.newPagePaper,
     newPageBackground: BGS.includes(r.newPageBackground as BackgroundKind) ? (r.newPageBackground as BackgroundKind) : d.newPageBackground,
     pullToAddPage: r.pullToAddPage !== false,
+    resumeLastPage: r.resumeLastPage !== false,
   };
 }
 

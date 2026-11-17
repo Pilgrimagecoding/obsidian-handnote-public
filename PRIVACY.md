@@ -40,6 +40,10 @@ a separate opt-in, and a confirmation shows what will be sent.
 - API / MyScript keys: Obsidian's secret storage.
 - Recovery journal and backups: `<vault>/.obsidian/plugins/handnote/journal/` and `backups/`, to
   recover unsaved strokes after a crash.
+- Last viewed page: `<vault>/.obsidian/plugins/handnote/view-local.json` (this device's view) and
+  `view-sync.json` (the page only; synced if your sync tool syncs the plugin folder). They hold note
+  ids, page ids and when you viewed them, no titles and no content. Turn it off in Settings →
+  *Open notes where you left off*.
 - Recognition models and fonts: this device's browser storage (IndexedDB `handnote-models`). They
   are never in your vault and never synced; you can delete them in Settings.
 - Diagnostics (input, performance, local-recognition self-test): shown on screen. They leave the

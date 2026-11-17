@@ -76,6 +76,7 @@ import { detectEnvironment, resolveInputMode, type InputMode } from '../input/in
 import { pressureVerdict, quantile } from '../input/diagnostics';
 import { DEFAULT_PEN_PARAMS, EXPERIMENTAL_FOUNTAIN } from '../ink/presets';
 import { ObjectController } from './objects';
+import { ZOOM_WIDTH_TOLERANCE, chooseRestore, resolvePage, type LocalView, type SyncedPage, type ViewSnapshot } from '../storage/view-state';
 
 export interface EditorHost {
   /** Obsidian Platform.isMobileApp (input-mode Auto detection). */
@@ -107,6 +108,8 @@ export interface EditorHost {
   openAISettings?(): void;
   /** Export one page (page navigator menu). */
   exportPage?(index: number, kind: 'png' | 'svg'): void;
+  /** 0.13: the view moved (at most once per frame, only after restoreView). */
+  onViewChange?(v: ViewSnapshot): void;
 }
 
 const NO_ENGINE: EngineInfo = { engine: 'vision', ready: false, reason: 'no-ai', model: '', label: '', sends: 'image', maxImageSide: 1280, kind: 'vision-llm' };
@@ -264,6 +267,15 @@ export class HandNoteEditor {
   private toolBeforeHand: Tool | null = null;
   private pointerInside = false;
   private hiddenCam: Camera | null = null;
+  /** 0.13: the view is reported to the host only once the note's last view was restored. */
+  private restored = false;
+  /** last view to restore, waiting for the viewport to get a size */
+  private pendingRestore: { local?: LocalView; synced?: SyncedPage } | null = null;
+  /** camera right after the restore (has the user moved since?) */
+  private restoreCam: Camera | null = null;
+  private viewReportRaf = 0;
+  /** last reported view (kept while the viewport is hidden) */
+  private lastView: ViewSnapshot | null = null;
 
   private rafId = 0;
   /** when the last ink stroke ended (a hand touch right after writing is not a tap on text) */
@@ -635,6 +647,93 @@ export class HandNoteEditor {
   }
 
   // ---------------------------------------------------------------------------------------------
+  // Last viewed page (0.13)
+  // ---------------------------------------------------------------------------------------------
+
+  /** True once restoreView ran: from then on the view is the user's, not the opening default. */
+  get viewRestored(): boolean {
+    return this.restored;
+  }
+
+  /** True while the view is still the one the note was opened on (nothing moved it since). */
+  get viewUntouched(): boolean {
+    if (this.pendingRestore) return true;
+    const a = this.restoreCam;
+    const c = this.cam;
+    return !!a && Math.abs(a.x - c.x) < 0.5 && Math.abs(a.y - c.y) < 0.5 && Math.abs(a.zoom - c.zoom) < 1e-6;
+  }
+
+  /** Where the note is being viewed; null before the viewport ever had a size. */
+  getViewState(): ViewSnapshot | null {
+    if (this.viewW <= 0) return this.lastView;
+    const c = this.cam;
+    if (this.boardMode) return { pageId: '', pageIndex: 0, x: c.x, offsetY: c.y, zoom: c.zoom, viewW: this.viewW, board: { x: c.x, y: c.y, zoom: c.zoom } };
+    const idx = this.currentPageIndex();
+    const r = this.rects[idx];
+    if (!r) return null;
+    return { pageId: r.page.id, pageIndex: idx, x: c.x, offsetY: c.y - r.y, zoom: c.zoom, viewW: this.viewW };
+  }
+
+  /**
+   * Show the note where it was last viewed (this device's view, or the page another device viewed
+   * later). Without arguments the note stays at its start. Either way the view is reported from
+   * now on. Waits for the viewport to get a size.
+   */
+  restoreView(local?: LocalView, synced?: SyncedPage): void {
+    if (this.destroyed) return;
+    if (this.viewW <= 0) {
+      this.pendingRestore = { local, synced };
+      return;
+    }
+    this.pendingRestore = null;
+    this.restored = true;
+    if (local || synced) this.applyRestore(local, synced);
+    this.restoreCam = { ...this.cam };
+  }
+
+  private applyRestore(local: LocalView | undefined, synced: SyncedPage | undefined): void {
+    const plan = chooseRestore(local, synced, { viewW: this.viewW, board: this.boardMode });
+    if (plan.kind === 'default') return;
+    if (plan.kind === 'exact' && this.boardMode) {
+      const b = plan.view.board;
+      if (b) this.setCamera(b);
+    } else if (!this.boardMode) {
+      const pages = this.doc.pages;
+      const fit = this.fitWidthZoom();
+      let cam: Camera;
+      if (plan.kind === 'exact') {
+        const v = plan.view;
+        const r = this.rects[resolvePage(pages, v.pageId, v.pageIndex)];
+        if (!r) return;
+        // a much wider or narrower window than when recorded: fit the width, same place in the page
+        const sameWidth = v.viewW > 0 && Math.abs(this.viewW - v.viewW) / v.viewW < ZOOM_WIDTH_TOLERANCE;
+        cam = sameWidth ? { x: v.x, y: r.y + v.offsetY, zoom: v.zoom } : { x: 0, y: r.y + v.offsetY, zoom: fit };
+      } else {
+        const r = this.rects[resolvePage(pages, plan.pageId, plan.pageIndex)];
+        if (!r) return;
+        const zoom = plan.zoom ?? fit;
+        cam = { x: plan.x, y: r.y - 12 / zoom, zoom };
+      }
+      this.setCamera(cam);
+    }
+    this.requestScene(true);
+    this.updateToolbar();
+  }
+
+  /** Report the view to the host on the next frame (the camera can move many times per frame). */
+  private scheduleViewReport(): void {
+    if (!this.restored || this.viewReportRaf || this.destroyed || !this.host.onViewChange) return;
+    this.viewReportRaf = window.requestAnimationFrame(() => {
+      this.viewReportRaf = 0;
+      if (this.destroyed || this.viewW <= 0) return;
+      const v = this.getViewState();
+      if (!v) return;
+      this.lastView = v;
+      this.host.onViewChange?.(v);
+    });
+  }
+
+  // ---------------------------------------------------------------------------------------------
   // Pull to add a page (0.10)
   // ---------------------------------------------------------------------------------------------
 
@@ -906,6 +1005,7 @@ export class HandNoteEditor {
     this.closePagesSidebar();
     window.clearTimeout(this.wheelPullTimer);
     cancelAnimationFrame(this.zoomLabelRaf);
+    cancelAnimationFrame(this.viewReportRaf);
     this.pull.destroy();
     this.toolbar.destroy();
     this.convertFlow.dispose();
@@ -1076,6 +1176,10 @@ export class HandNoteEditor {
     this.placeCanvases();
     if (first) this.fitWidth(0);
     else this.setCamera(this.cam);
+    if (this.pendingRestore) {
+      const p = this.pendingRestore;
+      this.restoreView(p.local, p.synced);
+    }
     this.renderScene();
   }
 
@@ -1167,6 +1271,7 @@ export class HandNoteEditor {
     this.objects?.sync();
     this.lasso?.sync();
     this.convertFlow?.sync();
+    this.scheduleViewReport();
   }
 
   /** Schedule a scene re-render on the next frame. */

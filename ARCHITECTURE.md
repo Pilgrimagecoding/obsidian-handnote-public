@@ -55,6 +55,7 @@ HandNoteView (plugin/view.ts): debounced save · flush on background · sync gua
 | `src/utils/perf.ts` | Pipeline instrumentation | ✓ |
 | `src/storage/sync-guard.ts` | Save/reload decisions, conflict copy naming | ✓ |
 | `src/storage/recovery.ts` | Device-local journal + backups (Obsidian `DataAdapter`) | – |
+| `src/storage/view-state.ts` | Last viewed page per note: exact view in `view-local.json` (this device), page only in `view-sync.json` (synced); newer wins | ✓ |
 | `src/plugin/*` | Plugin entry, `FileView`, embeds, settings tab | – |
 | `experiments/ink-lab/` | The editor in a plain web page (Phase 1 prototype, browser tests) | ✓ |
 
