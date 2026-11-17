@@ -109,7 +109,8 @@ frame. Export the whole board or the current view as an image, or embed it in Ma
 
 A hand tool (H) that only moves the page, a command for every tool and page action (give them
 hotkeys in Settings → Hotkeys), go to page by tapping the page counter, a contents tab for PDFs with
-bookmarks, and pull past the last page to add a new one.
+bookmarks, and pull past the last page to add a new one. Each note reopens where you left off: on
+the same device at the same zoom and place, and on your other devices on the same page.
 
 ## Plain files in your vault
 

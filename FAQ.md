@@ -52,6 +52,13 @@ OneDrive, Git — whatever syncs your vault syncs your notes. HandNote checks th
 save. If another device changed it in the meantime, that version is kept as a
 `(conflict …).handnote` copy instead of being overwritten.
 
+### Why does a note open on a page other than the first?
+
+HandNote reopens each note where you left off: on the same device with the same zoom and place on
+the page, and on another device on the same page (at that device's zoom) when your plugin folder
+syncs. Turn it off in Settings → *Open notes where you left off*. The note files are never changed
+for this; the positions are kept in `view-local.json` and `view-sync.json` in the plugin folder.
+
 ### What happens if the app is closed in the middle of writing?
 
 Unsaved strokes go to a small recovery journal in the plugin folder about 0.4 s after you write. When

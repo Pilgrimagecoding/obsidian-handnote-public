@@ -2,6 +2,15 @@
 
 Three automated layers plus the manual iPad protocol.
 
+## Unreleased (2026-11-17) — open notes where you left off
+
+| Layer | Result |
+|---|---|
+| Unit | **360 / 362**. New `tests/unit/v13-view-state.test.ts` (14): file parsing, newest-wins merge, pruning, page by id then position, restore choice (zoom kept only at a similar width, whiteboard camera), page change written at once, debounced view, synced write merged with the file on disk, failed write kept for retry. The 2 failures are the engine-1 / engine-2 geometry hashes under Node 26 (they also fail on `main`; CI runs Node 22) |
+| Browser (Chromium 157) | **87 / 92**. New (4): reopen on the same page and place; another device's page at fit width; horizontal place kept; whiteboard camera. The 5 failures (two-tier toolbar, pen panel, v0.4 tool taps, v0.4 lasso, 0.12.2 pen contact stops scrolling inertia) also fail on `main` |
+
+Not run by automation: Obsidian E2E. iPad checked by hand by the maintainer (2026-11-17).
+
 ## v0.8.1 (2026-10-22) — community-directory scan fixes
 
 Typecheck PASS; unit 182 / 182 (public) and 182 / 182 (private); browser 83 / 83 each; Obsidian

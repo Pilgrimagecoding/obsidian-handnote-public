@@ -2994,3 +2994,195 @@ t('0.9 keyboard paste (Ctrl+V): text and images from the paste event; HandNote c
   await firePaste({ text: '' });
   assert((await strokeCount(page)) === n0 + 1, 'empty system text after a HandNote copy → the copied ink is pasted');
 });
+
+// ---------------------------------------------------------------------------------------------
+// 0.13: open notes where you left off (editor side; the stores are unit-tested)
+// ---------------------------------------------------------------------------------------------
+
+const frames = (page, n = 3) =>
+  page.evaluate((n) => new Promise((r) => {
+    const step = (i) => (i ? requestAnimationFrame(() => step(i - 1)) : r());
+    step(n);
+  }), n);
+
+t('0.13 last viewed page: reported only after restore, and reopened exactly on the same device', async ({ page, base, assert }) => {
+  await open(page, base);
+  await page.evaluate(() => {
+    window.__vt = window.__hn.viewEditor(5);
+    window.__vt.editor.gotoPage(2);
+  });
+  await frames(page);
+  assert((await page.evaluate(() => window.__vt.views.length)) === 0, 'nothing reported before restoreView (the opening view is not the user’s)');
+  assert((await page.evaluate(() => window.__vt.editor.getViewState())) !== null, 'a view state exists');
+  await page.evaluate(() => {
+    window.__vt.editor.restoreView();
+    window.__vt.editor.gotoPage(3);
+  });
+  await frames(page);
+  const v = await page.evaluate(() => window.__vt.views.at(-1));
+  assert(v && v.pageIndex === 3 && v.pageId, `page 4 reported (${JSON.stringify(v)})`);
+  const cam0 = await page.evaluate(() => window.__vt.editor.camera);
+  const doc = await page.evaluate(() => {
+    const d = window.__vt.serialize();
+    window.__vt.close();
+    return d;
+  });
+  // reopen the same note on the same device
+  await page.evaluate(({ doc, v }) => {
+    window.__vt = window.__hn.viewEditor(0, { doc });
+    window.__vt.editor.restoreView({ ...v, at: 10 }, undefined);
+  }, { doc, v });
+  await frames(page);
+  const cam1 = await page.evaluate(() => window.__vt.editor.camera);
+  assert((await page.evaluate(() => window.__vt.editor.currentPageIndex())) === 3, 'reopened on page 4');
+  assert(Math.abs(cam1.y - cam0.y) < 0.5 && Math.abs(cam1.zoom - cam0.zoom) < 1e-6, `same camera (${cam0.y.toFixed(1)} vs ${cam1.y.toFixed(1)})`);
+  // a zoomed-in view keeps its horizontal position too
+  await page.evaluate(() => {
+    const ed = window.__vt.editor;
+    ed.setView({ x: 120, y: ed.camera.y + 80, zoom: 2.2 });
+  });
+  await frames(page);
+  const z = await page.evaluate(() => window.__vt.views.at(-1));
+  const cz = await page.evaluate(() => window.__vt.editor.camera);
+  await page.evaluate(({ doc, z }) => {
+    window.__vt.close();
+    window.__vt = window.__hn.viewEditor(0, { doc });
+    window.__vt.editor.restoreView({ ...z, at: 10 }, undefined);
+  }, { doc, z });
+  await frames(page);
+  const cz1 = await page.evaluate(() => window.__vt.editor.camera);
+  assert(Math.abs(cz1.x - cz.x) < 0.5 && Math.abs(cz1.y - cz.y) < 0.5 && Math.abs(cz1.zoom - 2.2) < 1e-6, `zoomed view restored (${JSON.stringify(cz1)})`);
+  await page.evaluate(() => window.__vt.close());
+});
+
+t('0.13 last viewed page: a note opened in a hidden tab restores once it gets a size', async ({ page, base, assert }) => {
+  await open(page, base);
+  await page.evaluate(() => {
+    const a = window.__hn.viewEditor(6);
+    a.editor.restoreView();
+    a.editor.gotoPage(4);
+    window.__a = a;
+  });
+  await frames(page);
+  const v = await page.evaluate(() => {
+    const v = window.__a.views.at(-1);
+    window.__doc = window.__a.serialize();
+    window.__a.close();
+    return v;
+  });
+  await page.evaluate((v) => {
+    window.__vt = window.__hn.viewEditor(0, { doc: window.__doc, hidden: true });
+    window.__vt.editor.restoreView({ ...v, at: 10 }, undefined);
+  }, v);
+  await frames(page);
+  assert((await page.evaluate(() => window.__vt.editor.viewRestored)) === false, 'restore waits while the viewport has no size');
+  assert((await page.evaluate(() => window.__vt.editor.getViewState())) === null, 'no view to save while waiting (closing now keeps the stored page)');
+  await page.evaluate(() => window.__vt.show());
+  await page.waitForFunction(() => window.__vt.editor.viewRestored, null, { timeout: 3000 });
+  await frames(page);
+  assert((await page.evaluate(() => window.__vt.editor.currentPageIndex())) === 4, 'restored to page 5 after the first layout');
+  await page.evaluate(() => window.__vt.close());
+});
+
+t('0.13 last viewed page: another device’s newer page wins (this device’s zoom); page found by id', async ({ page, base, assert }) => {
+  await open(page, base);
+  const info = await page.evaluate(() => {
+    const a = window.__hn.viewEditor(6);
+    a.editor.restoreView();
+    const ids = a.editor.getDocument().pages.map((p) => p.id);
+    const doc = a.serialize();
+    const viewW = a.editor.getViewState().viewW;
+    a.close();
+    return { ids, doc, viewW };
+  });
+  const local = { pageId: info.ids[4], pageIndex: 4, x: 0, offsetY: 0, zoom: 1.3, viewW: info.viewW, at: 100 };
+  // another device viewed page 2 later
+  await page.evaluate(({ doc, local, id }) => {
+    window.__vt = window.__hn.viewEditor(0, { doc });
+    window.__vt.editor.restoreView(local, { pageId: id, pageIndex: 1, at: 200 });
+  }, { doc: info.doc, local, id: info.ids[1] });
+  await frames(page);
+  let r = await page.evaluate(() => ({ page: window.__vt.editor.currentPageIndex(), zoom: window.__vt.editor.camera.zoom }));
+  assert(r.page === 1 && Math.abs(r.zoom - 1.3) < 1e-6, `synced page 2 at this device's zoom (${JSON.stringify(r)})`);
+  // zoomed in on one side of the page: the synced page keeps this device's zoom and side
+  const sideX = await page.evaluate(({ doc, local, id }) => {
+    window.__vt.close();
+    window.__vt = window.__hn.viewEditor(0, { doc });
+    const ed = window.__vt.editor;
+    // a real position on one side of the page at this zoom (the camera is clamped to the paper)
+    ed.setView({ x: -1e6, y: ed.camera.y, zoom: 2.4 });
+    const x = ed.camera.x;
+    ed.setView({ x: 1e6, y: ed.camera.y, zoom: 2.4 });
+    const side = (x + ed.camera.x) / 2 + (ed.camera.x - x) / 4;
+    ed.restoreView({ ...local, zoom: 2.4, x: side }, { pageId: id, pageIndex: 1, at: 200 });
+    return side;
+  }, { doc: info.doc, local, id: info.ids[1] });
+  await frames(page);
+  const side = await page.evaluate(() => ({ page: window.__vt.editor.currentPageIndex(), cam: window.__vt.editor.camera, untouched: window.__vt.editor.viewUntouched }));
+  assert(side.page === 1 && Math.abs(side.cam.zoom - 2.4) < 1e-6 && Math.abs(side.cam.x - sideX) < 0.5, `same zoom and side of the page (x ${sideX.toFixed(1)}: ${JSON.stringify(side)})`);
+  assert(side.untouched === true, 'view untouched right after the restore');
+  await page.evaluate(() => window.__vt.editor.gotoPage(3));
+  await frames(page);
+  assert((await page.evaluate(() => window.__vt.editor.viewUntouched)) === false, 'moved by the user: a later synced page is not applied');
+  // the window is much wider than when that zoom was set: fit width instead
+  await page.evaluate(({ doc, local, id }) => {
+    window.__vt.close();
+    window.__vt = window.__hn.viewEditor(0, { doc });
+    window.__vt.editor.restoreView({ ...local, viewW: local.viewW * 3 }, { pageId: id, pageIndex: 1, at: 200 });
+  }, { doc: info.doc, local, id: info.ids[1] });
+  await frames(page);
+  r = await page.evaluate(() => ({ page: window.__vt.editor.currentPageIndex(), zoom: window.__vt.editor.camera.zoom }));
+  assert(r.page === 1 && Math.abs(r.zoom - 1.3) > 0.01, `fit width on a different window size (${JSON.stringify(r)})`);
+  // pages reordered since: found by id, not by position
+  await page.evaluate(({ local }) => {
+    window.__vt.close();
+    window.__vt = window.__hn.viewEditor(6);
+    const ed = window.__vt.editor;
+    const pages = ed.getDocument().pages;
+    // the stored page id is the third page of this note; the stored index points elsewhere
+    window.__target = pages[2].id;
+    ed.restoreView({ ...local, pageId: pages[2].id, pageIndex: 5 }, undefined);
+  }, { local });
+  await frames(page);
+  assert((await page.evaluate(() => window.__vt.editor.currentPageIndex())) === 2, 'page found by id');
+  // that page deleted: same position, clamped to the note
+  await page.evaluate(({ local }) => {
+    window.__vt.close();
+    window.__vt = window.__hn.viewEditor(3);
+    window.__vt.editor.restoreView({ ...local, pageId: 'gone', pageIndex: 9 }, undefined);
+  }, { local });
+  await frames(page);
+  assert((await page.evaluate(() => window.__vt.editor.currentPageIndex())) === 2, 'deleted page: last page of a shorter note');
+  await page.evaluate(() => window.__vt.close());
+});
+
+t('0.13 last viewed page: whiteboards restore their camera; a fresh note stays at its start', async ({ page, base, assert }) => {
+  await open(page, base);
+  await page.evaluate(() => {
+    window.__vt = window.__hn.viewEditor(0);
+    window.__vt.editor.restoreView();
+    window.__vt.editor.setView({ x: 400, y: -250, zoom: 0.6 });
+  });
+  await frames(page);
+  const v = await page.evaluate(() => window.__vt.views.at(-1));
+  assert(v && v.board && Math.abs(v.board.zoom - 0.6) < 1e-6, `whiteboard camera reported (${JSON.stringify(v)})`);
+  await page.evaluate((v) => {
+    const doc = window.__vt.serialize();
+    window.__vt.close();
+    window.__vt = window.__hn.viewEditor(0, { doc });
+    window.__vt.editor.restoreView({ ...v, at: 10 }, { pageId: 'x', pageIndex: 3, at: 999 });
+  }, v);
+  await frames(page);
+  const c = await page.evaluate(() => window.__vt.editor.camera);
+  assert(Math.abs(c.x - 400) < 0.5 && Math.abs(c.y + 250) < 0.5 && Math.abs(c.zoom - 0.6) < 1e-6, `whiteboard camera restored, synced page ignored (${JSON.stringify(c)})`);
+  // no stored view: the note opens at its start
+  await page.evaluate(() => {
+    window.__vt.close();
+    window.__vt = window.__hn.viewEditor(4);
+    window.__vt.editor.restoreView(undefined, undefined);
+  });
+  await frames(page);
+  assert((await page.evaluate(() => window.__vt.editor.currentPageIndex())) === 0, 'page 1');
+  assert((await page.evaluate(() => window.__vt.editor.viewRestored)) === true, 'reports from now on');
+  await page.evaluate(() => window.__vt.close());
+});
