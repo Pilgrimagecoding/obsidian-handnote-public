@@ -1,8 +1,9 @@
 # Third-party notices
 
-`main.js` contains one third-party program, **ONNX Runtime Web** (MIT, see "Built into main.js"),
+`main.js` contains **hash-wasm 4.12.0** (incremental SHA-256; MIT, SHA-256 implementation ISC;
+full licence notices embedded via `src/import/hash.ts`) and **ONNX Runtime Web** (MIT, see "Built into main.js"),
 and third-party **data** (Chinese stroke templates, Arphic Public License — see "Bundled data"
-below). Both licence texts are embedded in `main.js`. Optional packs downloaded on the user's request
+below). The licence texts are embedded in `main.js`. Optional packs downloaded on the user's request
 are listed under "Downloaded on request". The following MIT-licensed projects were studied; their
 ideas (not their code) influenced the design, as recorded in `docs/ARCHITECTURE_DECISION.md`:
 

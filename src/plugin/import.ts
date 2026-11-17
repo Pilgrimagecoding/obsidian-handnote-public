@@ -13,8 +13,8 @@ import { FuzzySuggestModal, Modal, Notice, Platform, TFile, loadPdfJs, normalize
 import { serializeDocument } from '../document/codec';
 import { createDocument, type DocKind, type DocSource } from '../document/model';
 import { DocError, docCacheStats, forgetSource, markSourceFailed, setDocCacheBudget, setDocRenderer, sourceById, type DocPageRenderer, type OutlineItem, type RenderedPage } from '../rendering/doc-layer';
-import { LIMITS, describeBytes, detectFormat, sha256Hex } from '../import/detect';
-import { PdfRenderer, openPdf, pdfPageSizes, type PdfJsLib } from '../import/pdf';
+import { IMPORT_HEADER_BYTES, LIMITS, describeBytes, detectFormat, detectHeader, sha256Hex, type Detection } from '../import/detect';
+import { PdfPageLimitError, PdfRenderer, inspectPdf, type PdfJsLib } from '../import/pdf';
 import { documentPages, makeSource } from '../import/pages';
 import { LAYOUT_SUFFIX, parseDisplayList, type DisplayList } from '../import/display-list';
 import { canvasMeasurer, layoutDocx } from '../import/docx';
@@ -45,7 +45,7 @@ const ACCEPT = [
 ].join(',');
 
 /** Steps of an import, named in error messages so the user sees where it stopped. */
-type Stage = 'read' | 'detect' | 'open' | 'layout' | 'store' | 'note';
+type Stage = 'read' | 'detect' | 'hash' | 'open' | 'layout' | 'store' | 'note';
 
 class ImportError extends Error {
   constructor(
@@ -65,23 +65,41 @@ const describe = (e: unknown): string => {
   return err?.name && err.name !== 'Error' && !msg.includes(err.name) ? `${err.name}: ${msg}` : msg;
 };
 
+const detectionReason = (det: Detection): string => det.problemCode === 'zero-header' ? t('importZeroHeader') : det.problem ?? 'unsupported file';
+
+async function readPickedPart(file: File, start: number, end: number, signal: AbortSignal): Promise<ArrayBuffer> {
+  if (signal.aborted) throw new Cancelled();
+  let part: ArrayBuffer;
+  try {
+    part = await file.slice(start, end).arrayBuffer();
+    if (part.byteLength !== end - start) throw new Error('incomplete file read');
+  } catch (e) {
+    if (signal.aborted) throw new Cancelled();
+    throw new ImportError('read', fill(t('importReadFailed'), { error: describe(e) }));
+  }
+  if (signal.aborted) throw new Cancelled();
+  return part;
+}
+
+/** Reject placeholders/unsupported files before allocating a file-sized buffer on iPad. */
+async function preflightPicked(file: File, signal: AbortSignal): Promise<void> {
+  const head = new Uint8Array(await readPickedPart(file, 0, Math.min(file.size, IMPORT_HEADER_BYTES), signal));
+  const det = detectHeader(head, file.name, file.size);
+  if (det?.problem) throw new ImportError('detect', detectionReason(det), describeBytes(head, file.name, file.size));
+}
+
 /**
  * Read a picked file in pieces with progress (a 100 MB file from a cloud provider can take a while
  * on iPad; the user sees it advance and can cancel). Read errors are explained: on iPadOS they
  * usually mean the Files app could not hand the file over (still downloading, provider refused).
  */
 async function readPicked(file: File, signal: AbortSignal, progress: (done: number, total: number) => void): Promise<ArrayBuffer> {
+  if (signal.aborted) throw new Cancelled();
   const total = file.size;
   const out = new Uint8Array(total);
   const CHUNK = 8 * 1024 * 1024;
   for (let off = 0; off < total; off += CHUNK) {
-    if (signal.aborted) throw new Cancelled();
-    let part: ArrayBuffer;
-    try {
-      part = await file.slice(off, Math.min(total, off + CHUNK)).arrayBuffer();
-    } catch (e) {
-      throw new ImportError('read', fill(t('importReadFailed'), { error: describe(e) }));
-    }
+    const part = await readPickedPart(file, off, Math.min(total, off + CHUNK), signal);
     out.set(new Uint8Array(part), off);
     progress(Math.min(total, off + CHUNK), total);
   }
@@ -313,6 +331,7 @@ export class DocumentImporter {
   private pdf: PdfRenderer;
   private office: OfficeRenderer;
   private pdfLib: Promise<PdfJsLib> | null = null;
+  private importQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly plugin: HandNotePlugin) {
     this.pdf = new PdfRenderer(() => this.lib(), (src) => this.readSource(src));
@@ -563,7 +582,14 @@ export class DocumentImporter {
     void this.run({ vault: file }, null);
   }
 
-  async run(src: { file?: File; vault?: TFile }, into: HandNoteView | null, at?: number): Promise<{ index: number; count: number; cancelled?: boolean } | null> {
+  run(src: { file?: File; vault?: TFile }, into: HandNoteView | null, at?: number): Promise<{ index: number; count: number; cancelled?: boolean } | null> {
+    // Two import commands must not allocate two large files at the same time on iPad.
+    const next = this.importQueue.then(() => this.runOne(src, into, at));
+    this.importQueue = next.then(() => undefined, () => undefined);
+    return next;
+  }
+
+  private async runOne(src: { file?: File; vault?: TFile }, into: HandNoteView | null, at?: number): Promise<{ index: number; count: number; cancelled?: boolean } | null> {
     let placed: { index: number; count: number } | null = null;
     const name = src.vault?.name ?? src.file?.name ?? 'document';
     const prog = new ProgressModal(this.app, t('importTitle'));
@@ -579,7 +605,8 @@ export class DocumentImporter {
     // give the progress dialog a frame before the work starts (it must be visible at once)
     await new Promise((r) => window.setTimeout(r, 30));
     try {
-      if (size > LIMITS.maxFile) throw new ImportError('read', fill(t('importTooLarge'), { size: mb(size), max: mb(LIMITS.maxFile) }));
+      // Actual format detection below retains the lower Office limit (names are not trusted).
+      if (size > LIMITS.maxPdfFile) throw new ImportError('read', fill(t('importTooLarge'), { size: mb(size), max: mb(LIMITS.maxPdfFile) }));
       if (src.file && size === 0) throw new ImportError('read', t('importEmptyCloud'));
       let buf: ArrayBuffer;
       if (src.vault) {
@@ -588,10 +615,14 @@ export class DocumentImporter {
         } catch (e) {
           throw new ImportError('read', describe(e));
         }
-      } else buf = await readPicked(src.file as File, prog.ctl.signal, (done, total) => prog.set(fill(t('importReadingMb'), { name, done: mb(done), total: mb(total) })));
+      } else {
+        await preflightPicked(src.file as File, prog.ctl.signal);
+        buf = await readPicked(src.file as File, prog.ctl.signal, (done, total) => prog.set(fill(t('importReadingMb'), { name, done: mb(done), total: mb(total) })));
+      }
       check();
       stage = 'detect';
-      const bytes = new Uint8Array(buf);
+      let bytes = new Uint8Array(buf);
+      const byteLength = bytes.byteLength; // PDF.js will detach this buffer; keep metadata now.
       let zip: ZipArchive | null = null;
       const det = await detectFormat(bytes, name, async (e) => {
         zip ??= new ZipArchive(bytes);
@@ -599,20 +630,26 @@ export class DocumentImporter {
       });
       check();
       if ((det.kind === 'pptx' || det.kind === 'xlsx' || det.kind === 'docx') && !LAID_OUT.includes(det.kind)) throw new ImportError('detect', fill(t('importOfficeLater'), { kind: det.kind.toUpperCase() }));
-      if (det.kind !== 'pdf' && det.kind !== 'docx' && det.kind !== 'pptx' && det.kind !== 'xlsx' && det.kind !== 'doc') throw new ImportError('detect', det.problem ?? 'unsupported file', describeBytes(bytes, name));
+      if (det.kind !== 'pdf' && det.kind !== 'docx' && det.kind !== 'pptx' && det.kind !== 'xlsx' && det.kind !== 'doc') throw new ImportError('detect', detectionReason(det), describeBytes(bytes, name));
       const kind: DocKind = det.kind;
-      const sha = await sha256Hex(bytes);
+      stage = 'hash';
+      const sha = await sha256Hex(bytes, prog.ctl.signal, (done, total) => prog.set(fill(t('importHashing'), { done: mb(done), total: mb(total) })));
       check();
       let sizes: { width: number; height: number }[];
       let layout: DisplayList | null = null;
       if (kind === 'pdf') {
         stage = 'open';
-        // open first: a damaged / password-protected PDF fails before anything is written
-        const pdf = await openPdf(await this.lib(), bytes.slice());
+        // Transfer ownership instead of cloning the whole PDF. Finish worker teardown before
+        // deduplication, storing, or rendering can allocate another large source buffer.
         try {
-          sizes = await pdfPageSizes(pdf, (done, total) => prog.set(fill(t('importPages'), { done, total })), prog.ctl.signal);
+          sizes = await inspectPdf(await this.lib(), bytes, (done, total) => prog.set(fill(t('importPages'), { done, total })), prog.ctl.signal);
+        } catch (e) {
+          if (e instanceof PdfPageLimitError) throw new ImportError('open', fill(t('importPdfTooManyPages'), { pages: e.pages, max: LIMITS.maxPdfPages }));
+          throw e;
         } finally {
-          void Promise.resolve(pdf.destroy()).catch(() => undefined);
+          // Also drop our references when PDF.js uses a fake worker without transfer support.
+          bytes = new Uint8Array(0);
+          buf = new ArrayBuffer(0);
         }
       } else {
         stage = 'layout';
@@ -629,7 +666,7 @@ export class DocumentImporter {
       let path: string;
       if (src.vault) path = src.vault.path;
       else {
-        const same = await this.findSame(kind, bytes.byteLength, sha);
+        const same = await this.findSame(kind, byteLength, sha, prog.ctl.signal);
         check();
         if (same) {
           path = same.path;
@@ -639,12 +676,17 @@ export class DocumentImporter {
           // without one, or with the wrong one), so Obsidian and HandNote recognise it later
           const base = name.replace(/\.[^.]*$/, '') || 'document';
           const target = await this.originalPath(`${base}.${kind}`, notePath);
+          // The picked File remains disk-backed. Read it again ONLY when a new copy is needed:
+          // Obsidian createBinary needs a full buffer, but it no longer overlaps PDF.js memory.
+          if (kind === 'pdf') buf = await readPicked(src.file as File, prog.ctl.signal, (done, total) => prog.set(fill(t('importStoringMb'), { done: mb(done), total: mb(total) })));
+          check();
           stored = await this.app.vault.createBinary(target, buf);
+          if (kind === 'pdf') buf = new ArrayBuffer(0);
           path = stored.path;
         }
       }
       check();
-      const source: DocSource = makeSource(kind, path, bytes.byteLength, sha, sizes.length);
+      const source: DocSource = makeSource(kind, path, byteLength, sha, sizes.length);
       if (layout) {
         const prior = await this.existingLayout(path, sha);
         if (prior) {
@@ -715,9 +757,12 @@ export class DocumentImporter {
   }
 
   /** A vault file with the same extension, size and SHA-256 (the same document imported before). */
-  private async findSame(kind: DocKind, size: number, sha: string): Promise<TFile | null> {
+  private async findSame(kind: DocKind, size: number, sha: string, signal?: AbortSignal): Promise<TFile | null> {
     const cands = this.app.vault.getFiles().filter((f) => f.extension.toLowerCase() === kind && f.stat.size === size).slice(0, 12);
-    for (const c of cands) if ((await sha256Hex(await this.app.vault.readBinary(c))) === sha) return c;
+    for (const c of cands) {
+      if (signal?.aborted) throw new Cancelled();
+      if ((await sha256Hex(await this.app.vault.readBinary(c), signal)) === sha) return c;
+    }
     return null;
   }
 

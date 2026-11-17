@@ -28,6 +28,8 @@ export interface Detection {
   kind: DetectedKind;
   /** Why the file is not accepted, when it is not. */
   problem?: string;
+  /** Localized by the import UI; the sampled bytes need not represent the entire file. */
+  problemCode?: 'zero-header';
   /** ZIP entries (Office formats). */
   entries?: ZipEntry[];
 }
@@ -35,10 +37,12 @@ export interface Detection {
 import { Cfb } from './cfb';
 
 export const LIMITS = {
-  /** Largest file accepted for import (bytes). */
+  /** Office files retain their original limit; PDFs have a separate budget. */
   maxFile: 200 * 1024 * 1024,
-  /** Largest PDF page count imported. */
+  maxPdfFile: 512 * 1024 * 1024,
+  /** Office layout limit. PDF overflow is rejected, never truncated. */
   maxPages: 2000,
+  maxPdfPages: 10000,
   /** ZIP: most entries, largest total uncompressed size and largest ratio accepted. */
   maxEntries: 20000,
   maxUnzipped: 1024 * 1024 * 1024,
@@ -46,6 +50,9 @@ export const LIMITS = {
 };
 
 const OLE = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
+export const IMPORT_HEADER_BYTES = 2048;
+
+const isZip = (b: Uint8Array): boolean => startsWith(b, [0x50, 0x4b, 0x03, 0x04]) || startsWith(b, [0x50, 0x4b, 0x05, 0x06]);
 
 function startsWith(b: Uint8Array, sig: number[], at = 0): boolean {
   if (b.length < at + sig.length) return false;
@@ -136,14 +143,37 @@ const MAIN_PART: Record<'docx' | 'pptx' | 'xlsx', { part: string; types: RegExp;
 };
 
 /**
+ * Inspect a small prefix before allocating the whole picked file. `null` means a container or
+ * CSV needs the full detection pass; a PDF header still needs validation by PDF.js later.
+ * Apply the Office budget only to recognized container/text candidates, not to unknown content.
+ */
+export function detectHeader(b: Uint8Array, name: string, size = b.length): Detection | null {
+  const ext = (name.split('.').pop() ?? '').toLowerCase();
+  if (size === 0) return { kind: 'unknown', problem: 'the file is empty' };
+  if (size > LIMITS.maxPdfFile) return { kind: 'unknown', problem: `the file is larger than ${LIMITS.maxPdfFile / 1024 / 1024} MB` };
+  if (ascii(b, 0, 1024).includes('%PDF-')) return { kind: 'pdf' };
+  if (startsWith(b, OLE) || isZip(b) || ext === 'csv' || ext === 'tsv') {
+    if (size > LIMITS.maxFile) return { kind: 'unknown', problem: `the file is larger than ${LIMITS.maxFile / 1024 / 1024} MB` };
+    return null;
+  }
+  const sampled = b.subarray(0, Math.min(b.length, IMPORT_HEADER_BYTES));
+  if (sampled.length && sampled.every((c) => c === 0)) {
+    return {
+      kind: 'unknown', problemCode: 'zero-header',
+      problem: 'the beginning of the file contains only zero bytes, with no document header — it may be a size-test placeholder, damaged, or incompletely downloaded. Check that it displays actual pages in Files or a PDF reader before importing again',
+    };
+  }
+  return { kind: 'unknown', problem: whatIsIt(b, ext) };
+}
+
+/**
  * Identify a file from its bytes. `contentTypes` returns the text of [Content_Types].xml (the
  * caller inflates that one small entry; detection itself never inflates anything).
  */
 export async function detectFormat(b: Uint8Array, name: string, contentTypes?: (e: ZipEntry) => Promise<string>): Promise<Detection> {
   const ext = (name.split('.').pop() ?? '').toLowerCase();
-  if (b.length === 0) return { kind: 'unknown', problem: 'the file is empty' };
-  if (b.length > LIMITS.maxFile) return { kind: 'unknown', problem: `the file is larger than ${LIMITS.maxFile / 1024 / 1024} MB` };
-  if (ascii(b, 0, 1024).includes('%PDF-')) return { kind: 'pdf' };
+  const header = detectHeader(b, name);
+  if (header) return header;
   if (startsWith(b, OLE)) {
     // what the compound file holds decides, not the name
     let streams: string[] = [];
@@ -158,7 +188,7 @@ export async function detectFormat(b: Uint8Array, name: string, contentTypes?: (
     if (streams.includes('Workbook') || streams.includes('Book')) return { kind: 'legacy-office', problem: 'an old Excel 97–2003 file (.xls) — save it as .xlsx or as PDF (Excel / WPS / Numbers) and import that' };
     return { kind: 'legacy-office', problem: `an old binary Office file (.${ext || '?'}) that is not a Word document — save it as .docx / .pptx / .xlsx or as PDF` };
   }
-  if (startsWith(b, [0x50, 0x4b, 0x03, 0x04]) || startsWith(b, [0x50, 0x4b, 0x05, 0x06])) {
+  if (isZip(b)) {
     let entries: ZipEntry[];
     try {
       entries = zipEntries(b);
@@ -223,17 +253,10 @@ function whatIsIt(b: Uint8Array, ext: string): string {
 }
 
 /** Size and first bytes of a file, for the "details" of an import failure. */
-export function describeBytes(b: Uint8Array, name: string): string {
+export function describeBytes(b: Uint8Array, name: string, size = b.length): string {
   const hex = Array.from(b.subarray(0, 16), (x) => x.toString(16).padStart(2, '0')).join(' ');
   const txt = ascii(b, 0, 32).replace(/[^\x20-\x7e]/g, '.');
-  return `${name}: ${b.length} bytes; starts with ${hex || '(nothing)'}  "${txt}"`;
+  return `${name}: ${size} bytes${size > b.length ? ` (first ${b.length} bytes checked)` : ''}; starts with ${hex || '(nothing)'}  "${txt}"`;
 }
 
-/** Lower-case hex SHA-256 (Web Crypto; available in Obsidian desktop and mobile). */
-export async function sha256Hex(data: ArrayBuffer | Uint8Array): Promise<string> {
-  const view = data instanceof Uint8Array ? data : new Uint8Array(data);
-  const buf = new Uint8Array(view.byteLength);
-  buf.set(view);
-  const h = await crypto.subtle.digest('SHA-256', buf.buffer);
-  return Array.from(new Uint8Array(h), (x) => x.toString(16).padStart(2, '0')).join('');
-}
+export { sha256Hex } from './hash';

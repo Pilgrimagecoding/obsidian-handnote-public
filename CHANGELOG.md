@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.12.3 — 2026-11-17
+
+- Raise the PDF import limit from 200 MiB to 512 MiB and reduce peak memory use by hashing in chunks and releasing PDF inspection resources before saving a new copy.
+- Import up to 10,000 PDF pages in full. Larger PDFs get a page limit message instead of being cut off at 2,000 pages.
+- Check the header before reading the full file from the device and show a useful error for zero-filled placeholders.
+
+Release notes: `docs/release-notes/0.12.3.md`.
+
 ## 0.12.2 — 2026-11-17
 
 - Add a writing cursor setting for drawing tablets and mice. Choose a small dot or the default crosshair.

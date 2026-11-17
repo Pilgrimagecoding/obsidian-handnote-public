@@ -49,6 +49,7 @@ jobs:
       - name: Tests and build of the edition to publish
         run: |
           npm test
+          node scripts/test-pdf-import.mjs
           npm run build
       - run: npm run package
       # Fails if the tag != manifest version, if release/handnote differs from the build, if the

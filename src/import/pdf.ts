@@ -78,7 +78,7 @@ export async function pdfOutline(doc: PdfDocument): Promise<OutlineItem[]> {
   return walk(raw, 1);
 }
 export interface PdfJsLib {
-  getDocument(src: Record<string, unknown>): { promise: Promise<PdfDocument>; destroy?(): void; onPassword?: unknown };
+  getDocument(src: Record<string, unknown>): { promise: Promise<PdfDocument>; destroy?(): Promise<void> | void; onPassword?: unknown };
 }
 
 /** Options that keep PDF.js from running code from the file or touching the network. */
@@ -90,31 +90,81 @@ const SAFE: Record<string, unknown> = {
   stopAtErrors: false,
 };
 
-export async function openPdf(lib: PdfJsLib, data: Uint8Array): Promise<PdfDocument> {
+/** Takes ownership of data: PDF.js transfers its buffer to its worker. */
+export async function openPdf(lib: PdfJsLib, data: Uint8Array, signal?: AbortSignal): Promise<PdfDocument> {
+  if (signal?.aborted) throw new DOMException('cancelled', 'AbortError');
   const task = lib.getDocument({ data, ...SAFE });
+  let abort: (() => void) | undefined;
   try {
-    return await task.promise;
+    const cancelled = new Promise<never>((_, reject) => {
+      abort = () => reject(new DOMException('cancelled', 'AbortError'));
+      signal?.addEventListener('abort', abort, { once: true });
+      if (signal?.aborted) abort();
+    });
+    return await Promise.race([task.promise, cancelled]);
   } catch (e) {
+    // A failed or cancelled loading task still owns worker memory until destroyed.
+    await Promise.resolve().then(() => task.destroy?.()).catch(() => undefined);
     const name = (e as { name?: string })?.name ?? '';
+    if (name === 'AbortError' || signal?.aborted) throw new DOMException('cancelled', 'AbortError');
     if (name === 'PasswordException') throw new DocError('unsupported', 'the PDF is password-protected');
     if (name === 'InvalidPDFException') throw new DocError('damaged', 'the PDF is damaged');
-    throw new DocError('damaged', String((e as Error)?.message ?? e));
+    throw new DocError('failed', String((e as Error)?.message ?? e));
+  } finally {
+    if (abort) signal?.removeEventListener('abort', abort);
+  }
+}
+
+export class PdfPageLimitError extends DocError {
+  constructor(readonly pages: number) {
+    super('too-large', `The PDF has ${pages} pages, above the ${LIMITS.maxPdfPages} page limit. Split it into smaller PDFs; no pages have been imported.`);
   }
 }
 
 /** Page sizes in points (PDF user space, rotation applied), for the pages of a new note. */
 export async function pdfPageSizes(doc: PdfDocument, onProgress?: (done: number, total: number) => void, signal?: AbortSignal): Promise<{ width: number; height: number }[]> {
-  const n = Math.min(doc.numPages, LIMITS.maxPages);
+  const n = doc.numPages;
+  if (!Number.isInteger(n) || n < 1) throw new DocError('damaged', 'the PDF has no valid pages');
+  if (n > LIMITS.maxPdfPages) throw new PdfPageLimitError(n);
   const out: { width: number; height: number }[] = [];
   for (let i = 1; i <= n; i++) {
     if (signal?.aborted) throw new DOMException('cancelled', 'AbortError');
     const p = await doc.getPage(i);
-    const v = p.getViewport({ scale: 1 });
-    out.push({ width: Math.max(20, Math.min(14400, v.width)), height: Math.max(20, Math.min(14400, v.height)) });
-    p.cleanup?.();
+    try {
+      if (signal?.aborted) throw new DOMException('cancelled', 'AbortError');
+      const v = p.getViewport({ scale: 1 });
+      out.push({ width: Math.max(20, Math.min(14400, v.width)), height: Math.max(20, Math.min(14400, v.height)) });
+    } finally {
+      p.cleanup?.();
+    }
     if (onProgress && (i % 10 === 0 || i === n)) onProgress(i, n);
+    if (i % 25 === 0) await new Promise<void>((r) => setTimeout(r, 0));
   }
+  if (signal?.aborted) throw new DOMException('cancelled', 'AbortError');
   return out;
+}
+
+/** Consume the buffer and finish teardown before the caller can reopen/render the stored PDF. */
+export async function inspectPdf(lib: PdfJsLib, data: Uint8Array, onProgress?: (done: number, total: number) => void, signal?: AbortSignal): Promise<{ width: number; height: number }[]> {
+  const pdf = await openPdf(lib, data, signal);
+  let disposal: Promise<void> | undefined;
+  const dispose = () => disposal ??= Promise.resolve().then(() => pdf.destroy());
+  let abort: (() => void) | undefined;
+  try {
+    const cancelled = new Promise<never>((_, reject) => {
+      abort = () => {
+        // Cancel even if getPage is still waiting on a complex/broken page in the worker.
+        void dispose().catch(() => undefined);
+        reject(new DOMException('cancelled', 'AbortError'));
+      };
+      signal?.addEventListener('abort', abort, { once: true });
+      if (signal?.aborted) abort();
+    });
+    return await Promise.race([pdfPageSizes(pdf, onProgress, signal), cancelled]);
+  } finally {
+    if (abort) signal?.removeEventListener('abort', abort);
+    await dispose();
+  }
 }
 
 /**

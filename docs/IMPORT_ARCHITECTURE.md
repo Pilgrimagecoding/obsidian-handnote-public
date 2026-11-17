@@ -41,7 +41,7 @@ Word / PowerPoint / Excel sources also carry `"layout":"Attachments/Report.docx.
 
 | Module | Role |
 |---|---|
-| `src/import/detect.ts` | Real format from the bytes: `%PDF-`, OOXML ZIP (main part + `[Content_Types].xml`), OLE (old .doc/.ppt/.xls → refused), macro-enabled OOXML (refused). Reads only the ZIP central directory: entry count, total size and compression ratio limits (ZIP bombs) before anything is inflated. SHA-256 via Web Crypto. |
+| `src/import/detect.ts` | Real format from the bytes: `%PDF-`, OOXML ZIP (main part + `[Content_Types].xml`), OLE (old .doc/.ppt/.xls → refused), macro-enabled OOXML (refused). Reads only the ZIP central directory: entry count, total size and compression ratio limits (ZIP bombs) before anything is inflated. Incremental SHA-256 via bundled hash-wasm. |
 | `src/import/pdf.ts` | PDF.js subset: open with `isEvalSupported:false`, `enableXfa:false`, no streaming / auto-fetch; page sizes (rotation applied, absurd sizes capped); `PdfRenderer` renders one page into a canvas, keeps the last 3 documents open. |
 | `src/import/pages.ts` | Pages for a source (one per document page, its size, white paper) and the source record. |
 | `src/rendering/doc-layer.ts` | Painter + cache: on-demand rasterization per visible page at a zoom bucket (powers of two, longest side ≤ 4096 px), newest request first, stale requests (page scrolled away for 1.5 s) dropped, LRU pixel budget (iPad / phone 24 MP ≈ 96 MB, desktop 64 MP), failures per file (missing, damaged, unsupported) or per page, placeholders with the reason, `ensureDocPage` for PNG export and embeds. |
@@ -60,9 +60,20 @@ Word / PowerPoint / Excel sources also carry `"layout":"Attachments/Report.docx.
 
 1. Pick: *From this device* (`<input type=file>` opened inside the tap — iPadOS shows Files) or *From
    the vault* (fuzzy picker), or file explorer → *Annotate in HandNote* on a PDF.
-2. Size limit (200 MB), real format detection, SHA-256.
+2. Size limit (PDF: 512 MiB; Office: 200 MiB), real format detection, incremental SHA-256
+   using bundled hash-wasm. Hashing uses bounded chunks and yields for progress / cancellation.
+   Picked files first read at most 2 KiB before allocating the full buffer. Only recognized
+   Office/container/CSV candidates receive the 200 MiB limit; unknown contents keep their format
+   explanation. All-zero sampled headers report a possible placeholder/damage/incomplete download,
+   not a size violation. Vault reads still use Obsidian's whole-file binary API.
 3. Open the PDF (a damaged or password-protected file fails here, before anything is written), read
-   the page sizes (progress, cancellable), page limit 2000.
+   the page sizes (progress, cancellable). PDFs up to 10000 pages are imported completely;
+   longer PDFs are rejected before reading pages, with an explicit split-file message.
+   PDF.js takes ownership of the original byte buffer instead of receiving a full-size copy.
+   Inspection awaits worker destruction before the next stage. A newly picked PDF is read again
+   for storage only if no identical vault file exists; this trades extra I/O for lower peak memory.
+   Vault PDFs are referenced directly. Obsidian's binary read/write API still requires one full buffer;
+   this is not range streaming and the limit is not a guarantee every iPad can open every 512 MiB PDF.
 4. Original: the vault file itself; or an identical vault file (reused, no second copy); or a new
    copy at Obsidian's attachment location.
 5. New note (named after the file) or pages inserted after the current page (one undo step).

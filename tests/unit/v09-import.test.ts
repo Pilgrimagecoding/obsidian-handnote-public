@@ -127,7 +127,7 @@ test('detect: ZIP bombs, damaged directories and oversize files are refused befo
   assert.throws(() => zipEntries(bomb), /ratio|1 GB/);
   const broken = zip({ 'a.txt': 'x' }).slice(0, 40);
   assert.throws(() => zipEntries(broken), /ZIP/);
-  const big = { length: LIMITS.maxFile + 1 } as unknown as Uint8Array;
+  const big = { length: LIMITS.maxFile + 1, 0: 0x50, 1: 0x4b, 2: 0x03, 3: 0x04 } as unknown as Uint8Array;
   assert.match((await detectFormat(big, 'big.pdf')).problem ?? '', /larger/);
 });
 
