@@ -294,6 +294,7 @@ export class HandNoteEditor {
     this.toolbar = new Toolbar(this.root, this.toolbarActions());
     this.viewport = el('div', 'hn-viewport', this.root);
     this.viewport.tabIndex = 0;
+    this.updateCursor();
     this.pull = new PullToAddPage(this.root);
     this.scene = el('canvas', 'hn-scene', this.viewport);
     this.activeStable = el('canvas', 'hn-active', this.viewport);
@@ -507,6 +508,7 @@ export class HandNoteEditor {
 
   updateSettings(s: EditorSettings): void {
     this.settings = s;
+    this.updateCursor();
     this.router.setOptions({ fingerDrawing: s.fingerDrawing, tapGestures: s.tapGestures, hand: s.tool === 'hand' });
     this.diagnostics.setEnabled(s.diagnostics);
     this.applyMode();
@@ -582,6 +584,12 @@ export class HandNoteEditor {
     this.updateToolbar();
     if (tool === 'text') this.hint('text', t('tapToAddText'));
     if (tool === 'shape') this.hint('shape', t('dragToDrawShape'));
+    this.updateCursor();
+  }
+
+  private updateCursor(): void {
+    const { writingCursor, tool } = this.settings;
+    this.viewport.classList.toggle('hn-cursor-dot', writingCursor === 'dot');
     this.viewport.classList.toggle('is-laser', tool === 'laser');
     this.viewport.classList.toggle('is-hand', tool === 'hand');
   }
@@ -1536,6 +1544,12 @@ export class HandNoteEditor {
     // a lifted shape-pen stroke is settled before anything else (erase, lasso, a new stroke) starts
     this.flushPendingShape();
     if (isOverlayTarget(e.target)) return;
+    // A new contact stops the fling before hit-testing and mapping the first ink sample.
+    if (this.inertia) {
+      this.inertia = null;
+      this.requestScene(true);
+      this.updateToolbar();
+    }
     this.pinScroll();
     this.closePopover();
     this.closeContextMenu();
@@ -1804,9 +1818,9 @@ export class HandNoteEditor {
         this.navigating = true;
         this.inertia = null;
       },
-      navEnd: (velocity) => {
+      navEnd: (velocity, cancelled) => {
         this.navigating = false;
-        if (this.pull.armed) {
+        if (this.pull.armed && !cancelled) {
           this.pull.reset();
           this.addPageAtEnd();
           return;
@@ -2995,6 +3009,7 @@ export class HandNoteEditor {
     if (!r) return;
     if (this.settings.tool !== 'lasso') {
       this.settings.tool = 'lasso';
+      this.updateCursor();
       this.settings.subbarOpen = true;
       this.host.onSettingsChange(this.settings);
       this.updateToolbar();

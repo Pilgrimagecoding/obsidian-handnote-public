@@ -333,6 +333,18 @@ test('lost pointer capture leaves no stale state', () => {
   assert.ok(Math.abs(host.cam.y + 40) < 1e-9, 'navigation works after a lost capture');
 });
 
+test('lost capture or reset ends a pen-tablet pan in the editor as well as the router', () => {
+  for (const stop of ['lost-capture', 'reset']) {
+    const { host, r } = setup();
+    r.setSpace(true);
+    assert.equal(r.down(ptr(1, 'pen', 10, 10)), 'mouse-pan');
+    if (stop === 'lost-capture') r.lostCapture(1, clock + 5);
+    else r.reset();
+    assert.equal(r.state, 'Idle');
+    assert.deepEqual(host.log, ['navStart', 'navEnd']);
+  }
+});
+
 test('reset() (app hidden) commits ink and clears contacts so a lost palm cannot block navigation', () => {
   const { host, r } = setup();
   r.down(ptr(1, 'pen', 10, 10));
@@ -383,6 +395,19 @@ test('a new Pencil contact ends a stroke whose pointerup was lost (no frozen edi
   r.up(ptr(1, 'pen', 12, 10)); // a late event for the old pointer is ignored
   assert.equal(host.committed, 2);
   assert.equal(r.state, 'Idle');
+});
+
+test('a pen or mouse can start a fresh stroke after a missed release with the same pointer ID', () => {
+  for (const kind of ['pen', 'mouse'] as const) {
+    const { host, r } = setup();
+    assert.equal(r.down(ptr(1, kind, 10, 10)), 'ink');
+    tick(100);
+    assert.equal(r.down(ptr(1, kind, 30, 30)), 'ink');
+    assert.deepEqual(host.log, [`inkBegin:${kind}`, 'inkCommit', `inkBegin:${kind}`]);
+    r.up(ptr(1, kind, 31, 30, { buttons: 0 }));
+    assert.equal(host.committed, 2);
+    assert.equal(r.state, 'Idle');
+  }
 });
 
 test('a silent pen (lost pointerup) does not block finger navigation forever', () => {

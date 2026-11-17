@@ -60,7 +60,7 @@ export interface RouterHost {
   eraseMove(p: RouterPointer, raw: Event | null): void;
   eraseEnd(): void;
   navStart(): void;
-  navEnd(velocity: { vx: number; vy: number } | null): void;
+  navEnd(velocity: { vx: number; vy: number } | null, cancelled?: boolean): void;
   /** Smallest zoom of a pinch (default MIN_ZOOM; whiteboards go further out). */
   minZoom?(): number;
   undo(): void;
@@ -184,7 +184,12 @@ export class InputRouter {
 
   down(p: RouterPointer): Owner | null {
     this.dropStale(p.t);
-    if (this.contacts.has(p.id)) return this.contacts.get(p.id)!.owner; // duplicate down
+    const prior = this.contacts.get(p.id);
+    if (prior && p.kind === 'touch') return prior.owner;
+    // A pen or mouse can reuse its pointer ID after a release the editor did not receive.
+    // Close the old contact before starting this new one, keeping the stroke already drawn.
+    if (prior) this.finish({ ...prior.p, t: p.t }, true);
+    if (this.mousePan?.id === p.id) this.endPointerPan(true);
     if (p.kind === 'pen') return this.penDown(p);
     if (p.kind === 'mouse') return this.mouseDown(p);
     return this.touchDown(p);
@@ -231,7 +236,7 @@ export class InputRouter {
   lostCapture(id: number, t: number): void {
     const c = this.contacts.get(id);
     if (c) this.finish({ ...c.p, t }, true);
-    else if (this.mousePan?.id === id) this.mousePan = null;
+    else if (this.mousePan?.id === id) this.endPointerPan(true);
   }
 
   /**
@@ -258,12 +263,10 @@ export class InputRouter {
   /** App hidden, view unloaded, orientation change: commit ink, forget every contact. */
   reset(): void {
     if (this.drawId !== null) this.endDraw(null, true);
-    if (this.navContacts().length) this.host.navEnd(null);
+    if (this.mousePan) this.endPointerPan(true);
+    this.endNav(false);
     this.contacts.clear();
-    this.anchor = null;
     this.tap = null;
-    this.mousePan = null;
-    this.panned = false;
     this.spaceDown = false;
   }
 
@@ -386,8 +389,7 @@ export class InputRouter {
 
   private finish(p: RouterPointer, cancelled: boolean): void {
     if (this.mousePan && p.id === this.mousePan.id) {
-      this.mousePan = null;
-      this.host.navEnd(null);
+      this.endPointerPan(cancelled);
       return;
     }
     const c = this.contacts.get(p.id);
@@ -410,7 +412,7 @@ export class InputRouter {
       if (remaining.length === 0) {
         const tap = this.tap;
         const velocity = this.panned && !cancelled ? this.velocity(p.t) : null;
-        this.endNav(true, velocity);
+        this.endNav(true, velocity, cancelled);
         if (tap && !tap.moved && !wasMoved && !cancelled && p.t - tap.t0 <= TAP_MAX_MS) {
           if (tap.max === 1) this.host.tap?.(p);
           else if (this.opts.tapGestures && tap.max === 2) this.host.undo();
@@ -428,6 +430,11 @@ export class InputRouter {
   // ---------------------------------------------------------------------------------------------
   // Navigation
   // ---------------------------------------------------------------------------------------------
+
+  private endPointerPan(cancelled: boolean): void {
+    this.mousePan = null;
+    this.host.navEnd(null, cancelled);
+  }
 
   private navContacts(): Contact[] {
     const out: Contact[] = [];
@@ -501,14 +508,14 @@ export class InputRouter {
     }
   }
 
-  private endNav(notify: boolean, velocity: { vx: number; vy: number } | null = null): void {
+  private endNav(notify: boolean, velocity: { vx: number; vy: number } | null = null, cancelled = false): void {
     const had = this.navStartCam !== null;
     this.anchor = null;
     this.navStartCam = null;
     this.panned = false;
     this.history = [];
-    if (had && notify) this.host.navEnd(this.navMoved ? velocity : null);
-    else if (had) this.host.navEnd(null);
+    if (had && notify) this.host.navEnd(this.navMoved ? velocity : null, cancelled);
+    else if (had) this.host.navEnd(null, true);
     this.navMoved = false;
   }
 

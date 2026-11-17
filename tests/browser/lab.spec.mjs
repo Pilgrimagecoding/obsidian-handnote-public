@@ -353,6 +353,47 @@ t('finger pan, then pinch, then pen: stroke lands at the touched page position',
   assert((await strokeCount(page)) === 1, 'navigation created no strokes');
 });
 
+t('pen contact stops scrolling inertia and starts a stroke immediately', async ({ page, base, assert }) => {
+  await open(page, base);
+  const result = await page.evaluate(async () => {
+    const ed = window.__hn.editor;
+    ed.setView({ x: 0, y: 100, zoom: 1.5 });
+    const v = document.querySelector('.hn-viewport');
+    const r = v.getBoundingClientRect();
+    const x = r.width / 2;
+    const frame = () => new Promise((resolve) => requestAnimationFrame(resolve));
+    let time = performance.now();
+    const pointer = (type, pointerType, pointerId, y) => {
+      const e = new PointerEvent(type, {
+        bubbles: true, cancelable: true, pointerType, pointerId,
+        clientX: r.left + x, clientY: r.top + y,
+        buttons: type === 'pointerup' ? 0 : 1, pressure: 0.5,
+        width: pointerType === 'touch' ? 52 : 1, height: pointerType === 'touch' ? 52 : 1,
+      });
+      Object.defineProperty(e, 'timeStamp', { value: (time += 16) });
+      v.dispatchEvent(e);
+    };
+    const y = r.height * 0.65;
+    pointer('pointerdown', 'touch', 51, y);
+    for (let i = 1; i <= 4; i++) pointer('pointermove', 'touch', 51, y - i * 24);
+    const releasedY = ed.camera.y;
+    pointer('pointerup', 'touch', 51, y - 96);
+    await frame();
+    await frame();
+    const penDownY = ed.camera.y;
+    pointer('pointerdown', 'pen', 52, y);
+    await frame();
+    await frame();
+    const writingY = ed.camera.y;
+    pointer('pointermove', 'pen', 52, y + 24);
+    pointer('pointerup', 'pen', 52, y + 24);
+    return { releasedY, penDownY, writingY, strokes: ed.getDocument().pages[0].strokes.length };
+  });
+  assert(result.penDownY > result.releasedY, `the finger gesture started inertia (${result.releasedY} → ${result.penDownY})`);
+  assert(result.writingY === result.penDownY, 'camera stops on the first pen contact');
+  assert(result.strokes === 1, 'the first pen contact writes');
+});
+
 t('finger drawing ON: one finger draws, two fingers still pinch', async ({ page, base, assert }) => {
   await open(page, base);
   await page.evaluate(() => {

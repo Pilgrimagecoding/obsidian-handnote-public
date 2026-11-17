@@ -92,6 +92,7 @@ export interface EditorSettings {
   highlighterPalette: string[];
   /** Per-device input conventions; never stored in .handnote files. */
   inputMode: InputModeSetting;
+  writingCursor: 'crosshair' | 'dot';
   /** Collect detailed input diagnostics (local only). */
   diagnostics: boolean;
   /** Subtle paper grain on the page background. */
@@ -160,6 +161,7 @@ export function defaultEditorSettings(): EditorSettings {
     inkPalette: [...INK_COLORS],
     highlighterPalette: [...HIGHLIGHTER_COLORS],
     inputMode: 'auto',
+    writingCursor: 'crosshair',
     diagnostics: false,
     paperTexture: false,
     newPaperTone: 'white',
@@ -243,6 +245,7 @@ export function sanitizeEditorSettings(raw: unknown): EditorSettings {
     inkPalette: colorList(r.inkPalette, d.inkPalette),
     highlighterPalette: colorList(r.highlighterPalette, d.highlighterPalette),
     inputMode: r.inputMode === 'pen' || r.inputMode === 'mouse' ? r.inputMode : 'auto',
+    writingCursor: r.writingCursor === 'dot' ? 'dot' : d.writingCursor,
     diagnostics: r.diagnostics === true,
     paperTexture: r.paperTexture === true,
     newPaperTone: r.newPaperTone === 'cream' || r.newPaperTone === 'yellow' ? r.newPaperTone : 'white',

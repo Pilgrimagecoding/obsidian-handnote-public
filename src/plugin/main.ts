@@ -727,6 +727,19 @@ class HandNoteSettingTab extends PluginSettingTab {
             save();
           }),
       );
+    new Setting(containerEl)
+      .setName(t('set.writingCursor'))
+      .setDesc(t('set.writingCursorDesc'))
+      .addDropdown((d) =>
+        d
+          .addOption('crosshair', t('set.writingCursor.crosshair'))
+          .addOption('dot', t('set.writingCursor.dot'))
+          .setValue(s.editor.writingCursor)
+          .onChange((v) => {
+            s.editor.writingCursor = v === 'dot' ? 'dot' : 'crosshair';
+            save();
+          }),
+      );
     toggle(containerEl, 'set.finger', 'set.fingerDesc', () => s.editor.fingerDrawing, (v) => (s.editor.fingerDrawing = v));
     toggle(containerEl, 'set.tapGestures', null, () => s.editor.tapGestures, (v) => (s.editor.tapGestures = v));
     toggle(containerEl, 'fingerDoubleTap', 'fingerDoubleTapDesc', () => s.editor.fingerDoubleTapEraser, (v) => (s.editor.fingerDoubleTapEraser = v));

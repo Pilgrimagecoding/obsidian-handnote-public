@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.12.2 — 2026-11-17
+
+- Add a writing cursor setting for drawing tablets and mice. Choose a small dot or the default crosshair.
+- Stop scrolling inertia as soon as you touch a HandNote canvas, so the first pen stroke starts on a stationary page.
+- Recover from missed pen or mouse releases and interrupted drags without leaving the canvas in drawing or dragging mode.
+
+Release notes: `docs/release-notes/0.12.2.md`.
+
 ## 0.12.1 — 2026-11-11
 
 Built from the same sources as the private test builds 0.12.0-beta.1 … 0.12.1-beta.4 (tested on the
