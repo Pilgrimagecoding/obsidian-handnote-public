@@ -1,18 +1,22 @@
 // 0.12 Ink on Markdown: where annotations are kept and the `annotates` header field.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ANNOTATION_FOLDER, annotationPath, isMarkdownPath, parentFolder } from '../../src/document/annotation-path';
+import { ANNOTATION_FOLDER, annotationPath, legacyAnnotationPath, relocatedChild, isMarkdownPath, parentFolder } from '../../src/document/annotation-path';
 import { anchorText, pickAnchorLine, relocateLine, sampleBounds, type DocLines } from '../../src/inkmd/anchor';
 import { createDocument, defaultBackground, FORMAT_VERSION } from '../../src/document/model';
 import { parseDocument, recoverDocument, requiredVersion, serializeDocument } from '../../src/document/codec';
 import { DEFAULT_PEN_PARAMS } from '../../src/ink/presets';
+import { annotationHasInk } from '../../src/inkmd/auto-open';
 
-test('md-ink: annotations mirror the note path in a visible folder', () => {
-  assert.equal(annotationPath('Courses/ML/Lecture 3.md'), `${ANNOTATION_FOLDER}/Courses/ML/Lecture 3.handnote`);
-  assert.equal(annotationPath('Daily.MD'), `${ANNOTATION_FOLDER}/Daily.handnote`);
-  assert.equal(annotationPath('a.b.md'), `${ANNOTATION_FOLDER}/a.b.handnote`);
+test('md-ink: annotations live beside Markdown; legacy paths remain discoverable', () => {
+  assert.equal(annotationPath('Courses/ML/Lecture 3.md'), 'Courses/ML/Lecture 3.md.handnote');
+  assert.equal(annotationPath('Daily.MD'), 'Daily.MD.handnote');
+  assert.equal(annotationPath('a.b.md'), 'a.b.md.handnote');
+  assert.equal(legacyAnnotationPath('Courses/ML/Lecture 3.md'), `${ANNOTATION_FOLDER}/Courses/ML/Lecture 3.handnote`);
+  assert.equal(relocatedChild('Courses/ML/a.md.handnote', 'Courses', 'School'), 'School/ML/a.md.handnote');
+  assert.equal(relocatedChild('Courses-other/a.md.handnote', 'Courses', 'School'), 'Courses-other/a.md.handnote');
   assert.ok(!ANNOTATION_FOLDER.startsWith('.'), 'not a hidden folder (sync plugins skip those)');
-  assert.equal(parentFolder(annotationPath('x.md')), ANNOTATION_FOLDER);
+  assert.equal(parentFolder(annotationPath('x.md')), '');
   assert.equal(parentFolder('x.md'), '');
   assert.ok(isMarkdownPath('n.md') && isMarkdownPath('n.MD') && !isMarkdownPath('n.handnote'));
 });
@@ -148,4 +152,26 @@ test('md-ink: a highlighter laid on text keeps its characters; a bad span is dro
   const bad = parseDocument(text.replace('"e":8', '"e":2')).doc.pages[0].strokes[0];
   assert.equal(bad.span, undefined);
   assert.equal(bad.tool, 'highlighter');
+});
+
+test('md-ink: a note opens with its annotations only when its annotation file holds ink or objects', () => {
+  const none = () => false;
+  const doc = createDocument({ width: 700, height: 1000, background: defaultBackground('blank') });
+  doc.annotates = 'Notes/A.md';
+  assert.equal(annotationHasInk(null, 'Notes/A.md', none), false, 'no file');
+  assert.equal(annotationHasInk('  ', 'Notes/A.md', none), false, 'empty file');
+  assert.equal(annotationHasInk(serializeDocument(doc), 'Notes/A.md', none), false, 'every annotation cleared');
+  assert.equal(annotationHasInk('{"format":"obsidian-handnote",', 'Notes/A.md', none), false, 'unreadable');
+  const inked = structuredClone(doc);
+  inked.pages[0].strokes.push({ id: 's1', tool: 'fountain', color: '#000', params: { ...DEFAULT_PEN_PARAMS }, zoom: 1, hasPressure: true, engine: 2, created: 1, samples: [{ x: 10, y: 10, t: 0, p: 0.5 }, { x: 40, y: 12, t: 16, p: 0.5 }] });
+  assert.equal(annotationHasInk(serializeDocument(inked), 'Notes/A.md', none), true, 'ink');
+  const boxed = structuredClone(doc);
+  boxed.pages[0].items = [{ id: 't1', type: 'text', x: 10, y: 10, w: 100, h: 30, created: 1, text: 'x', size: 16, color: '#000', font: 'sans', bold: false, italic: false, align: 'left', autoWidth: true }];
+  assert.equal(annotationHasInk(serializeDocument(boxed), 'Notes/A.md', none), true, 'a text box only');
+  // renamed note whose old path is gone: still its annotations (as InkFileStore.load); another note's: not
+  assert.equal(annotationHasInk(serializeDocument(inked), 'Notes/B.md', none), true, 'old link, that note no longer exists');
+  assert.equal(annotationHasInk(serializeDocument(inked), 'Notes/B.md', (p) => p === 'Notes/A.md'), false, 'belongs to another existing note');
+  const plain = structuredClone(inked);
+  delete plain.annotates;
+  assert.equal(annotationHasInk(serializeDocument(plain), 'Notes/A.md', none), false, 'an ordinary HandNote note is no annotation file');
 });

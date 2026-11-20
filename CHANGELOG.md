@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.12.4 — 2026-11-21
+
+- Sharper iPad Markdown zoom and SVG embed previews.
+- Export Markdown and annotations together; preserve typography and consistent sheet sizes.
+- Automatic annotation mode for notes with ink; anchored More menu and simplified exit controls.
+- Colocated annotation files, single-file imports, higher-quality notebook exports, global Chinese/English setting and counted page/bookmark filters.
+
+Release notes: `docs/release-notes/0.12.4.md`.
+
 ## 0.12.3 — 2026-11-17
 
 - Raise the PDF import limit from 200 MiB to 512 MiB and reduce peak memory use by hashing in chunks and releasing PDF inspection resources before saving a new copy.

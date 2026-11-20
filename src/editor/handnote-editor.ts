@@ -71,7 +71,7 @@ import {
   type TemplateChoice,
   renderGoToPagePanel,
 } from '../ui/panels';
-import { t } from '../ui/i18n';
+import { t, onLanguageChange } from '../ui/i18n';
 import { detectEnvironment, resolveInputMode, type InputMode } from '../input/input-mode';
 import { pressureVerdict, quantile } from '../input/diagnostics';
 import { DEFAULT_PEN_PARAMS, EXPERIMENTAL_FOUNTAIN } from '../ink/presets';
@@ -89,7 +89,7 @@ export interface EditorHost {
   /** Kept for API compatibility; HandNote draws its own icons. */
   setIcon?: IconSetter;
   /** Extra menu actions provided by the host (export, etc.). */
-  menuActions?: { label: string; run: () => void }[];
+  menuActions?: { label: string; icon?: string; diagnostic?: boolean; children?: { label: string; run: () => void }[]; run: () => void }[];
   /** Whiteboard (0.11): export what is on screen as PNG. */
   exportView?(): void;
   /**
@@ -292,6 +292,14 @@ export class HandNoteEditor {
     this.doc = doc;
     this.root = el('div', 'hn-editor', container);
     this.toolbar = new Toolbar(this.root, this.toolbarActions());
+    this.disposers.push(onLanguageChange(() => {
+      // Keep the document, camera and undo history; only dismiss transient translated panels.
+      this.closePopover();
+      this.closeContextMenu();
+      this.closePagesSidebar();
+      setDocPaintText({ loading: t('docLoading'), missing: t('docMissing'), failed: t('docFailed') });
+      this.updateToolbar();
+    }));
     this.viewport = el('div', 'hn-viewport', this.root);
     this.viewport.tabIndex = 0;
     this.updateCursor();

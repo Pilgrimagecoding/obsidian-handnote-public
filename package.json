@@ -1,6 +1,6 @@
 {
   "name": "obsidian-handnote",
-  "version": "0.12.3",
+  "version": "0.12.4",
   "description": "Apple Pencil-first handwriting plugin for Obsidian",
   "private": true,
   "author": "Yanzhe Shao",
@@ -35,6 +35,8 @@
     "node": ">=20"
   },
   "dependencies": {
-    "hash-wasm": "4.12.0"
+    "hash-wasm": "4.12.0",
+    "html2canvas": "1.4.1",
+    "pdf-lib": "1.17.1"
   }
 }

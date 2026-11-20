@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createDocument, newId, type Stroke } from '../../src/document/model';
+import { FORMAT_VERSION, createDocument, newId, type Stroke } from '../../src/document/model';
 import { parseDocument, quantizeSample, recoverDocument, requiredVersion, serializeDocument } from '../../src/document/codec';
 import { History } from '../../src/document/history';
 import { resolveConnectors, type Item, type ShapeItem, type TextItem } from '../../src/document/items';
@@ -78,8 +78,8 @@ test('format v3: pencil strokes, cut fragments and curve 4 require version 3; v2
   const back = parseDocument(serializeDocument(doc));
   assert.equal(back.doc.pages[0].strokes[0].tool, 'pencil');
   assert.equal(back.readOnly, false);
-  // a hypothetical v8 file opens read-only (v0.11 reads up to version 7)
-  const v5 = serializeDocument(doc).replace('"version":3', '"version":8');
+  // a hypothetical future-format file opens read-only
+  const v5 = serializeDocument(doc).replace('"version":3', `"version":${FORMAT_VERSION + 1}`);
   assert.equal(parseDocument(v5).readOnly, true);
 });
 

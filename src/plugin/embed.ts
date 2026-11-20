@@ -1,10 +1,11 @@
+import { notePackages, bindPackageSources } from '../storage/note-package';
 import { TFile, type MarkdownPostProcessorContext } from 'obsidian';
 import { parseDocument } from '../document/codec';
 import { GeometryCache } from '../document/geometry-cache';
 import type { HandNoteDocument } from '../document/model';
-import { framePage, pageRenderBox, renderPageToCanvas } from '../rendering/paint';
-import { preloadImages, registerAssets } from '../rendering/items-paint';
-import { ensureDocPage, registerSources } from '../rendering/doc-layer';
+import { registerAssets } from '../rendering/items-paint';
+import { registerSources } from '../rendering/doc-layer';
+import { renderEmbedPage } from './embed-page';
 import type HandNotePlugin from './main';
 import { EXTENSION } from './view';
 import { t } from '../ui/i18n';
@@ -108,8 +109,9 @@ export class EmbedManager {
     const c = this.docCache.get(file.path);
     if (c && c.mtime === file.stat.mtime) return c;
     try {
-      const text = await this.plugin.app.vault.cachedRead(file);
+      const text = await notePackages(this.plugin.app).read(file.path);
       const res = parseDocument(text);
+      bindPackageSources(res.doc, file.path);
       registerAssets(res.doc.assets);
       registerSources(res.doc.sources);
       const entry = { mtime: file.stat.mtime, doc: res.doc, geo: new GeometryCache() };
@@ -152,29 +154,7 @@ export class EmbedManager {
     const pages = max > 0 ? data.doc.pages.slice(0, max) : data.doc.pages;
     const width = Math.max(120, Math.min(el.clientWidth || el.parentElement?.clientWidth || 600, 1400));
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    for (const page of pages) {
-      const canvas = pagesEl.createEl('canvas', { cls: 'hn-embed-page' });
-      if (page.board) {
-        // whiteboard: its whole content, as wide as the note but at most 600 px high
-        const b = pageRenderBox(page, data.geo);
-        const cssW = Math.min(width, (600 * b.w) / b.h);
-        const bs = Math.min((cssW * dpr) / b.w, 2400 / Math.max(b.w, b.h));
-        renderPageToCanvas(canvas, page, data.geo, bs, b);
-        canvas.style.aspectRatio = `${b.w} / ${b.h}`;
-        canvas.style.maxWidth = `${Math.round(cssW)}px`;
-        canvas.addClass('is-board');
-        if (page.items?.some((i) => i.type === 'image')) void preloadImages(page).then(() => renderPageToCanvas(canvas, page, data.geo, bs, b));
-        const frames = page.board.frames.filter((f) => f.doc);
-        if (frames.length) void Promise.all(frames.map((f) => ensureDocPage(framePage(f), bs))).then(() => renderPageToCanvas(canvas, page, data.geo, bs, b));
-        continue;
-      }
-      const scale = Math.min((width * dpr) / page.width, 2400 / page.width);
-      renderPageToCanvas(canvas, page, data.geo, scale);
-      canvas.style.aspectRatio = `${page.width} / ${page.height}`;
-      if (page.items?.some((i) => i.type === 'image')) void preloadImages(page).then(() => renderPageToCanvas(canvas, page, data.geo, scale));
-      // an imported document page (PDF): render it, then repaint the embed once
-      if (page.doc) void ensureDocPage(page, scale).then(() => renderPageToCanvas(canvas, page, data.geo, scale));
-    }
+    for (const page of pages) renderEmbedPage(pagesEl, page, data.geo, width, dpr);
     const more = data.doc.pages.length - pages.length;
     const footer = box.createDiv({ cls: 'hn-embed-footer' });
     footer.setText(`✒ ${file.basename}${data.doc.pages[0]?.board ? ` · ${t('board')}` : ''}${more > 0 ? ` · +${more} more page${more > 1 ? 's' : ''}` : ''} · tap to edit`);

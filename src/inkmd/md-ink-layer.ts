@@ -51,10 +51,11 @@ import type { InkFileStore, InkStatus } from './ink-file';
  *   the pointer, so a hit test under the Pencil finds no text at all. A finger tap is passed on:
  *   links, checkboxes… are clicked; on text the editor becomes editable and the caret goes there
  *   (keyboard), until the Pencil comes back;
- * - zoom: the editor's `.cm-sizer` is scaled (CodeMirror supports transformed editors and maps
- *   taps correctly), so text and ink grow together and the text stays editable and sharp. During
- *   a pinch only a cheap preview transform of the editor box is applied (one composited layer);
- *   the real zoom is set once when the fingers lift (no re-layout per frame);
+ * - zoom: the editor box is scaled (CodeMirror supports transformed editors and maps taps
+ *   correctly), so text and ink grow together. During a pinch only a cheap preview transform of
+ *   the editor box is applied (one composited layer); the real zoom is set once when the fingers
+ *   lift (no re-layout per frame). On iPadOS the zoomed box holds no composited layer (see
+ *   applySharp), or WebKit magnifies it at its unscaled resolution;
  * - anchors: each stroke belongs to a line (see anchor.ts) and moves with it when text is added
  *   or removed above.
  *
@@ -91,6 +92,9 @@ export interface MdInkHost {
   settingsChanged(s: EditorSettings): void;
   /** leave the annotation mode for this note */
   exit(): void;
+  // MD_EXPORT_EXTENSION_BEGIN
+  export?(format: 'pdf' | 'png' | 'svg'): void;
+  // MD_EXPORT_EXTENSION_END
 }
 
 interface Box {
@@ -214,8 +218,18 @@ export class MdInkLayer {
   private readonly inkCtx: CanvasRenderingContext2D;
   private readonly liveCtx: CanvasRenderingContext2D;
   private readonly sizer: HTMLElement | null;
-  /** canvas rectangle in scroll-content px (visual) */
-  private cv = { left: 0, top: 0, w: 0, vw: 0, h: 0, dpr: 1, zoom: 0 };
+  /** canvas rectangle in scroll-content px (visual); `ov`: over the note instead, at client (ol, ot), drawn at scroll top `st` and offset `px` */
+  private cv = { left: 0, top: 0, w: 0, vw: 0, h: 0, dpr: 1, zoom: 0, ov: false, ol: 0, ot: 0, st: 0, px: 0 };
+  /** iPadOS: sharp zoom (applySharp) */
+  private readonly sharpZoom = Platform.isIosApp;
+  /** the ink canvases while zoomed with sharpZoom: unscaled, over the visible part of the note */
+  private readonly inkHost: HTMLElement;
+  /** the ink canvases are in inkHost (sharp zoom), not in the scroll container */
+  private overlay = false;
+  /** client positions of the editor box and of inkHost when a pinch preview began */
+  private previewAt: { ex: number; ey: number; ox: number; oy: number } | null = null;
+  /** one finger moving the note while it does not scroll natively (sharp zoom, no shield) */
+  private fingerPan: { id: number; x0: number; y0: number; x: number; y: number; t0: number; moving: boolean; trail: { x: number; y: number; t: number }[] } | null = null;
   private zoom = 1;
   private baseWidth = 0;
   private active: ActiveInk | null = null;
@@ -232,8 +246,8 @@ export class MdInkLayer {
   private editable = true;
   /** a finger tap made the text editable while an ink tool is selected */
   private typing = false;
-  /** live canvas rectangle (the visible part when the stroke started), scroll-content px */
-  private lv = { left: 0, top: 0, w: 0, h: 0, dpr: 1 };
+  /** live canvas rectangle (the visible part when the stroke started), scroll-content px (or over the note: see cv) */
+  private lv = { left: 0, top: 0, w: 0, h: 0, dpr: 1, ov: false, ol: 0, ot: 0 };
   /** content size last given to the clip */
   private clipW = 0;
   private clipH = 0;
@@ -301,7 +315,7 @@ export class MdInkLayer {
     this.bar = createDiv({ cls: 'hn-editor is-markdown hn-inkbar' });
     md.contentEl.prepend(this.bar);
     this.toolbar = new Toolbar(this.bar, this.toolbarActions(), { groups: MD_GROUPS, penKinds: MD_PEN_KINDS, strokeStyle: false });
-    this.toolbar.setMarkdown(() => this.host.exit());
+    this.toolbar.setMarkdown();
     // the ink, inside the scroll container (scrolls with the text); clipped to the content so it
     // never makes the note scroll further
     const sc = view.scrollDOM;
@@ -320,6 +334,7 @@ export class MdInkLayer {
     // the laser: over the visible part of the editor (does not scroll)
     this.laserHost = md.contentEl.createDiv({ cls: 'hn-ink-laserhost' });
     this.laser = new LaserPointer(this.laserHost, () => this.host.settings().laser);
+    this.inkHost = md.contentEl.createDiv({ cls: 'hn-ink-overhost' });
     // text boxes, images and shapes: HandNote's object controller over the visible part of the note
     // (outside the editor box: the box is scaled when zoomed, the overlays work in screen px)
     this.objHost = md.contentEl.createDiv({ cls: 'hn-editor hn-ink-objhost' });
@@ -557,6 +572,24 @@ export class MdInkLayer {
         panX: this.panX,
         touchAction: getComputedStyle(this.view.scrollDOM).touchAction,
         zoom: this.zoom,
+        // MD_DIAGNOSTICS_EXTENSION_BEGIN
+        display: {
+          devicePixelRatio: window.devicePixelRatio,
+          visualViewportScale: window.visualViewport?.scale,
+          editorScale: [v.scaleX, v.scaleY, this.boxScale()],
+          editorTransform: getComputedStyle(v.dom).transform,
+          sizerTransform: this.sizer ? getComputedStyle(this.sizer).transform : null,
+          willChange: getComputedStyle(v.dom).willChange,
+          pinching: v.dom.classList.contains('hn-ink-pinching'),
+          sharpZoom: this.overlay,
+          scrollerOverflow: getComputedStyle(v.scrollDOM).overflowY,
+          canvas: [this.inkCanvas.width, this.inkCanvas.height],
+          canvasRect: rect(this.inkCanvas),
+          liveCanvas: [this.liveCanvas.width, this.liveCanvas.height],
+          liveRect: rect(this.liveCanvas),
+          visiblePixelDensity: this.inkCanvas.width / Math.max(1, this.inkCanvas.getBoundingClientRect().width),
+        },
+        // MD_DIAGNOSTICS_EXTENSION_END
         editables,
       },
       null,
@@ -616,6 +649,60 @@ export class MdInkLayer {
   setStatus(s: InkStatus): void {
     this.toolbar.setStatus(s);
   }
+
+  // MD_EXPORT_EXTENSION_BEGIN
+  /** Capture the existing layout in bounded tiles; always restore the user's camera. */
+  async exportTiles(signal: AbortSignal, consume: (root: HTMLElement, crop: { x: number; y: number; width: number; height: number; scale: number; pageWidth: number; pageHeight: number }, ink: HTMLCanvasElement, index: number, total: number) => Promise<void>): Promise<void> {
+    if (this.closed) throw new Error('Markdown view is closed');
+    if (this.active) this.endStroke();
+    if (this.erase) this.endErase();
+    this.objects.finishEdit(); this.router.reset(); this.inertia = null;
+    await this.flush();
+    const camera = this.camNow(), document = this.view.state.doc, sc = this.view.scrollDOM;
+    const settle = async () => { for (let i = 0; i < 4; i++) await new Promise<void>(resolve => window.requestAnimationFrame(() => resolve())); };
+    try {
+      this.commitCamera({ x: 0, y: 0, zoom: 1 }); await settle();
+      const width = sc.clientWidth, height = sc.clientHeight;
+      if (width < 10 || height < 10) throw new Error('Markdown view is not visible');
+      const natural = -this.leftAt(1), span = this.inkSpan();
+      const left = Math.floor(Math.min(natural, span ? span.x0 - 24 : natural));
+      const right = Math.ceil(Math.max(natural + width, span ? span.x1 + 24 : natural + width));
+      const top = -(this.sizer?.offsetTop ?? 0);
+      // CodeMirror reserves scroll-past-end padding. It is not document content.
+      const contentOffset = (this.view.documentTop - (this.sizer ?? this.view.contentDOM).getBoundingClientRect().top) / this.boxScale();
+      let bottom = contentOffset + this.view.lineBlockAt(this.view.state.doc.length).bottom / this.hUnit() + 16;
+      for (const stroke of this.strokes) bottom = Math.max(bottom, contentOffset + this.box(stroke).y1 + this.shift(stroke) + 16);
+      for (const item of this.page?.items ?? []) bottom = Math.max(bottom, contentOffset + item.y + item.h + 16);
+      bottom = Math.max(top + 1, bottom);
+      const rows = Math.ceil((bottom - top) / height), cols = Math.ceil((right - left) / width);
+      if (rows * cols > 10000) throw new Error(t('exportPdfTooLarge'));
+      for (let row = 0; row < rows; row++) for (let col = 0; col < cols; col++) {
+        signal.throwIfAborted();
+        if (this.closed || this.view.state.doc !== document) throw new Error('Markdown changed during export; please retry');
+        const x = left + col * width, y = top + row * height;
+        this.panTo({ x, y, zoom: 1 }); await settle(); this.frame();
+        const actual = this.camNow(), w = Math.min(width, right - x), h = Math.min(height, bottom - y);
+        const scale = Math.min(3.125, Math.sqrt(12_000_000 / (width * height)), 8192 / Math.max(width, height));
+        // Export ink is redrawn at output resolution, not enlarged from the screen texture.
+        const c = this.cv;
+        c.left = sc.scrollLeft - this.panX; c.top = sc.scrollTop;
+        c.w = width; c.h = height;
+        c.dpr = scale; this.place(this.inkCanvas, c.left, c.top, c.w, c.h, scale); this.renderInk();
+        const ink = window.document.createElement('canvas'); ink.width = Math.ceil(w * scale); ink.height = Math.ceil(h * scale);
+        const ir = this.inkCanvas.getBoundingClientRect(), sr = sc.getBoundingClientRect();
+        const ox = x - actual.x, oy = y - actual.y;
+        ink.getContext('2d')!.drawImage(this.inkCanvas, (sr.left + ox - ir.left) * scale, (sr.top + oy - ir.top) * scale, w * scale, h * scale, 0, 0, ink.width, ink.height);
+        try { await consume(sc, { x: ox, y: oy, width: w, height: h, scale, pageWidth: width, pageHeight: height }, ink, row * cols + col + 1, rows * cols); }
+        finally { ink.width = ink.height = 0; }
+      }
+    } finally {
+      if (!this.closed) {
+        this.cv.w = 0; this.commitCamera(camera); await settle();
+        this.panTo(camera); this.needsInk = true; this.schedule();
+      }
+    }
+  }
+  // MD_EXPORT_EXTENSION_END
 
   /** Before saving: the anchors' lines as they are now. */
   refreshAnchors(doc: HandNoteDocument): void {
@@ -1104,7 +1191,9 @@ export class MdInkLayer {
     // on the same text) after this frame — draw again for a few frames until it has settled
     if (this.needsInk && this.followLines()) this.settle = 3;
     if (this.needsInk) this.reflowSpans();
-    if (this.placeCanvases() || this.needsInk) this.renderInk();
+    // over the note during a pinch preview: inkHost carries the preview, the ink waits for the commit
+    const frozen = this.overlay && this.view.dom.hasClass('hn-ink-previewbox');
+    if (!frozen && (this.placeCanvases() || this.needsInk)) this.renderInk();
     if (this.settle > 0) {
       this.settle--;
       this.needsInk = true;
@@ -1139,6 +1228,8 @@ export class MdInkLayer {
   private covered(): boolean {
     const sc = this.view.scrollDOM;
     const c = this.cv;
+    // over the note: drawn for this very view
+    if (c.ov) return c.w > 0 && this.overlay && c.zoom === this.zoom && c.vw === sc.clientWidth && c.st === sc.scrollTop && c.px === this.panX;
     const top = sc.scrollTop;
     const left = sc.scrollLeft - this.panX;
     return c.w > 0 && c.zoom === this.zoom && left >= c.left - 1 && left + sc.clientWidth <= c.left + c.w + 1 && top >= c.top - 1 && top + sc.clientHeight <= c.top + c.h + 1;
@@ -1179,6 +1270,7 @@ export class MdInkLayer {
     const vw = sc.clientWidth;
     const vh = sc.clientHeight;
     if (vw < 2 || vh < 2) return false;
+    if (this.overlay) return this.placeOverlay(vw);
     // canvas pixels per scroll px: sharp at the zoom of the box
     const dpr = Math.min(window.devicePixelRatio || 1, 3) * this.boxScale();
     if (this.covered() && Math.abs(this.cv.dpr - dpr) < 1e-3 && this.cv.vw === vw) return false;
@@ -1203,8 +1295,51 @@ export class MdInkLayer {
     c.h = h;
     c.dpr = dpr;
     c.zoom = this.zoom;
+    c.ov = false;
     this.place(this.inkCanvas, c.left, c.top, w, h, dpr);
     return true;
+  }
+
+  /** Sharp zoom: the ink canvas covers the visible part of the note, in screen px; drawn again whenever the view moves. */
+  private placeOverlay(vw: number): boolean {
+    const sc = this.view.scrollDOM;
+    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    const c = this.cv;
+    if (this.covered() && Math.abs(c.dpr - dpr) < 1e-3) return false;
+    this.sizeClip();
+    const r = this.overlayRect();
+    c.left = 0;
+    c.top = 0;
+    c.w = r.w;
+    c.h = r.h;
+    c.vw = vw;
+    c.dpr = dpr;
+    c.zoom = this.zoom;
+    c.ov = true;
+    c.ol = r.left;
+    c.ot = r.top;
+    c.st = sc.scrollTop;
+    c.px = this.panX;
+    this.place(this.inkCanvas, 0, 0, r.w, r.h, dpr);
+    return true;
+  }
+
+  /** The visible part of the note on screen (client px); inkHost is put there. */
+  private overlayRect(): { left: number; top: number; w: number; h: number } {
+    const sc = this.view.scrollDOM;
+    const bs = this.boxScale();
+    const sr = sc.getBoundingClientRect();
+    const cr = this.md.contentEl.getBoundingClientRect();
+    const left = sr.left + sc.clientLeft * bs;
+    const top = sr.top + sc.clientTop * bs;
+    const w = Math.max(1, Math.round(sc.clientWidth * bs));
+    const h = Math.max(1, Math.round(sc.clientHeight * bs));
+    const st = this.inkHost.style;
+    st.left = `${left - cr.left}px`;
+    st.top = `${top - cr.top}px`;
+    st.width = `${w}px`;
+    st.height = `${h}px`;
+    return { left, top, w, h };
   }
 
   private place(cv: HTMLCanvasElement, left: number, top: number, w: number, h: number, dpr: number): void {
@@ -1236,12 +1371,18 @@ export class MdInkLayer {
     }
   }
 
-  /** ctx transform: document px (shifted by `dy`) → pixels of a canvas at (left, top). */
-  private docTransform(ctx: CanvasRenderingContext2D, g: Geo, o: { ox: number; oy: number }, left: number, top: number, dpr: number, dy: number): void {
+  /** ctx transform: document px (shifted by `dy`) → pixels of a canvas at (left, top), or over the note at client (ol, ot). */
+  private docTransform(ctx: CanvasRenderingContext2D, g: Geo, o: { ox: number; oy: number }, r: { left: number; top: number; dpr: number; ov: boolean; ol: number; ot: number }, dy: number): void {
+    const dpr = r.dpr;
+    if (r.ov) {
+      // document px → client px → canvas pixels
+      ctx.setTransform(dpr * g.sx, 0, 0, dpr * g.sy, dpr * (g.cx - r.ol), dpr * (g.cy - r.ot + dy * g.sy));
+      return;
+    }
     // document px → scroll px (the box carries the zoom) → canvas pixels
     const sx = g.sx / g.bs;
     const sy = g.sy / g.bs;
-    ctx.setTransform(dpr * sx, 0, 0, dpr * sy, dpr * (o.ox - left), dpr * (o.oy - top + dy * sy));
+    ctx.setTransform(dpr * sx, 0, 0, dpr * sy, dpr * (o.ox - r.left), dpr * (o.oy - r.top + dy * sy));
   }
 
   private renderInk(): void {
@@ -1254,12 +1395,12 @@ export class MdInkLayer {
     const g = this.geo();
     const o = this.origin(g);
     const c = this.cv;
-    const y0 = ((c.top - o.oy) * g.bs) / g.sy;
-    const y1 = ((c.top + c.h - o.oy) * g.bs) / g.sy;
+    const y0 = c.ov ? (c.ot - g.cy) / g.sy : ((c.top - o.oy) * g.bs) / g.sy;
+    const y1 = c.ov ? (c.ot + c.h - g.cy) / g.sy : ((c.top + c.h - o.oy) * g.bs) / g.sy;
     const skip = this.skipStrokes;
     // text boxes, images and shapes are kept at today's layout (followLines): no shift
     if (page?.items.length) {
-      this.docTransform(ctx, g, o, c.left, c.top, c.dpr, 0);
+      this.docTransform(ctx, g, o, c, 0);
       paintItemsBelow(ctx, page, this.skipItems);
     }
     for (const s of this.strokes) {
@@ -1267,14 +1408,14 @@ export class MdInkLayer {
       const dy = this.shift(s);
       const b = this.box(s);
       if (b.y1 + dy < y0 || b.y0 + dy > y1) continue;
-      this.docTransform(ctx, g, o, c.left, c.top, c.dpr, dy);
+      this.docTransform(ctx, g, o, c, dy);
       const rows = this.spanChunks(s);
       if (rows) for (const gm of rows) paintInkStroke(ctx, s, gm);
       else paintInkStroke(ctx, s, this.cache.get(s));
     }
     ctx.globalAlpha = 1;
     if (page?.items.length) {
-      this.docTransform(ctx, g, o, c.left, c.top, c.dpr, 0);
+      this.docTransform(ctx, g, o, c, 0);
       paintItemsAbove(ctx, page, this.skipItems);
       ctx.globalAlpha = 1;
     }
@@ -1283,14 +1424,26 @@ export class MdInkLayer {
   /** The live canvas: the visible part of the note when the stroke started (it does not scroll meanwhile). */
   private placeLive(): void {
     const sc = this.view.scrollDOM;
-    const dpr = Math.min(window.devicePixelRatio || 1, 3) * this.boxScale();
     const l = this.lv;
-    l.left = Math.round(sc.scrollLeft - this.panX);
-    l.top = Math.round(sc.scrollTop);
-    l.w = sc.clientWidth;
-    l.h = sc.clientHeight;
-    l.dpr = dpr;
-    this.place(this.liveCanvas, l.left, l.top, l.w, l.h, dpr);
+    if (this.overlay) {
+      const r = this.overlayRect();
+      l.left = 0;
+      l.top = 0;
+      l.w = r.w;
+      l.h = r.h;
+      l.dpr = Math.min(window.devicePixelRatio || 1, 3);
+      l.ov = true;
+      l.ol = r.left;
+      l.ot = r.top;
+    } else {
+      l.left = Math.round(sc.scrollLeft - this.panX);
+      l.top = Math.round(sc.scrollTop);
+      l.w = sc.clientWidth;
+      l.h = sc.clientHeight;
+      l.dpr = Math.min(window.devicePixelRatio || 1, 3) * this.boxScale();
+      l.ov = false;
+    }
+    this.place(this.liveCanvas, l.left, l.top, l.w, l.h, l.dpr);
     this.liveCtx.setTransform(1, 0, 0, 1, 0, 0);
     this.liveCtx.clearRect(0, 0, this.liveCanvas.width, this.liveCanvas.height);
   }
@@ -1312,7 +1465,7 @@ export class MdInkLayer {
     const ys = [...st.ys, ...tl.ys];
     const rs = [...st.rs, ...tl.rs];
     const l = this.lv;
-    this.docTransform(ctx, a.geo, a.origin, l.left, l.top, l.dpr, 0);
+    this.docTransform(ctx, a.geo, a.origin, l, 0);
     ctx.fillStyle = a.tool === 'pencil' ? pencilFill(ctx, a.color) : a.color;
     ctx.beginPath();
     if (xs.length) emitStroke(new CanvasPathSink(ctx), xs, ys, rs, 0, xs.length === 1);
@@ -1328,7 +1481,7 @@ export class MdInkLayer {
     const g = er.geo;
     this.clearLive();
     const l = this.lv;
-    this.docTransform(ctx, g, er.origin, l.left, l.top, l.dpr, 0);
+    this.docTransform(ctx, g, er.origin, l, 0);
     ctx.strokeStyle = 'rgba(120,120,120,0.9)';
     ctx.fillStyle = 'rgba(120,120,120,0.08)';
     ctx.lineWidth = 1 / g.sx;
@@ -1508,6 +1661,9 @@ export class MdInkLayer {
       if (this.inkToolSelected() && e.cancelable) e.preventDefault();
       return;
     }
+    // sharp zoom: the note does not scroll natively, one finger moves it (touchMove)
+    const f0 = fingers[0];
+    this.fingerPan = fingers.length === 1 && this.overlay && !this.pinch ? { id: f0.identifier, x0: f0.clientX, y0: f0.clientY, x: f0.clientX, y: f0.clientY, t0: e.timeStamp, moving: false, trail: [{ x: f0.clientX, y: f0.clientY, t: e.timeStamp }] } : null;
     if (fingers.length === 2 && !this.pinch) {
       if (e.cancelable) e.preventDefault();
       this.startPinch(fingers[0], fingers[1]);
@@ -1529,7 +1685,10 @@ export class MdInkLayer {
       return;
     }
     const p = this.pinch;
-    if (!p) return;
+    if (!p) {
+      this.moveFingerPan(e);
+      return;
+    }
     if (e.cancelable) e.preventDefault();
     const a = Array.from(e.touches).find((tc) => tc.identifier === p.ids[0]);
     const b = Array.from(e.touches).find((tc) => tc.identifier === p.ids[1]);
@@ -1539,6 +1698,57 @@ export class MdInkLayer {
     p.fx = (a.clientX + b.clientX) / 2;
     p.fy = (a.clientY + b.clientY) / 2;
     this.preview(p.cam, this.pinchCamera(p));
+  }
+
+  /** Sharp zoom, no shield: a quick one-finger drag moves the note (a press held first stays the system's: selection, loupe). */
+  private moveFingerPan(e: TouchEvent): void {
+    const fp = this.fingerPan;
+    if (!fp) return;
+    const tc = e.touches.length === 1 ? Array.from(e.touches).find((t) => t.identifier === fp.id) : undefined;
+    if (!tc || !this.overlay) {
+      this.fingerPan = null;
+      return;
+    }
+    if (!fp.moving) {
+      if (Math.hypot(tc.clientX - fp.x0, tc.clientY - fp.y0) < 8) return;
+      if (e.timeStamp - fp.t0 > 350) {
+        this.fingerPan = null;
+        return;
+      }
+      fp.moving = true;
+      this.inertia = null;
+    }
+    if (e.cancelable) e.preventDefault();
+    const dx = tc.clientX - fp.x;
+    const dy = tc.clientY - fp.y;
+    fp.x = tc.clientX;
+    fp.y = tc.clientY;
+    fp.trail.push({ x: fp.x, y: fp.y, t: e.timeStamp });
+    while (fp.trail.length > 2 && e.timeStamp - fp.trail[0].t > 100) fp.trail.shift();
+    const c = this.camNow();
+    this.panTo({ ...c, x: c.x - dx / c.zoom, y: c.y - dy / c.zoom });
+  }
+
+  /** The finger of a one-finger pan lifted: momentum, as after a pan by the router. */
+  private endFingerPan(e: TouchEvent): boolean {
+    const fp = this.fingerPan;
+    if (!fp || Array.from(e.touches).some((t) => t.identifier === fp.id)) return false;
+    this.fingerPan = null;
+    if (!fp.moving) return false;
+    const a = fp.trail[0];
+    const b = fp.trail[fp.trail.length - 1];
+    const dt = b.t - a.t;
+    if (e.type === 'touchend' && dt > 0 && e.timeStamp - b.t < 80) {
+      const vx = (b.x - a.x) / dt;
+      const vy = (b.y - a.y) / dt;
+      const v = Math.hypot(vx, vy);
+      if (v >= 0.25) {
+        const k = v > MAX_FLING ? MAX_FLING / v : 1;
+        this.inertia = { vx: vx * k, vy: vy * k, last: performance.now() };
+        this.stepInertia();
+      }
+    }
+    return true;
   }
 
   /** Camera of a two-finger zoom: the point under the fingers when they landed stays under them. */
@@ -1554,6 +1764,11 @@ export class MdInkLayer {
   }
 
   private touchEnd(e: TouchEvent): void {
+    // a pan, not a tap: no click, no caret
+    if (this.endFingerPan(e)) {
+      if (e.cancelable) e.preventDefault();
+      return;
+    }
     const pinching = this.pinch;
     if (pinching) {
       const left = Array.from(e.touches).filter((tc) => tc.identifier === pinching.ids[0] || tc.identifier === pinching.ids[1]);
@@ -1619,12 +1834,14 @@ export class MdInkLayer {
     this.inertia = null;
     if (!(e.ctrlKey || e.metaKey)) {
       // sideways (trackpad, Shift + wheel): the view moves beside the note too; up and down stays
-      // native scrolling
-      const dx = e.deltaX || (e.shiftKey ? e.deltaY : 0);
-      if (!dx || this.editable) return;
+      // native scrolling (not with sharp zoom: the note does not scroll by itself then)
+      const dx = this.editable ? 0 : e.deltaX || (e.shiftKey ? e.deltaY : 0);
+      const dy = this.overlay && !e.shiftKey ? e.deltaY : 0;
+      if (!dx && !dy) return;
       e.preventDefault();
+      const u = e.deltaMode === 1 ? 16 : 1;
       const c = this.camNow();
-      this.panTo({ ...c, x: c.x + (dx * (e.deltaMode === 1 ? 16 : 1)) / c.zoom });
+      this.panTo({ ...c, x: c.x + (dx * u) / c.zoom, y: c.y + (dy * u) / c.zoom });
       return;
     }
     // Ctrl / ⌘ + wheel, trackpad pinch: zoom at the pointer
@@ -1742,9 +1959,10 @@ export class MdInkLayer {
         const sr = this.vpRect;
         this.nav = { base: null, preview: null, offX: sr.left - ed.left, offY: sr.top - ed.top };
         // the editor box becomes its own layer from the first finger on (a pinch preview then
-        // starts without repainting it)
+        // starts without repainting it) — not with sharp zoom, where a pan would show it blurred
+        // (the layer is made when a pinch preview starts)
         window.clearTimeout(this.layerTimer);
-        this.view.dom.addClass('hn-ink-pinching');
+        if (!this.overlay) this.view.dom.addClass('hn-ink-pinching');
       },
       navEnd: (velocity) => {
         const n = this.nav;
@@ -1891,7 +2109,8 @@ export class MdInkLayer {
   /** The note (its sizer) and the ink layers follow `panX` (transforms: no layout). */
   private applyPan(): void {
     this.layoutZoom();
-    const tr = this.panX ? `translate3d(${this.panX}px, 0, 0)` : '';
+    // over the note the ink is drawn at the offset itself
+    const tr = this.panX && !this.overlay ? `translate3d(${this.panX}px, 0, 0)` : '';
     for (const e of [this.inkCanvas, this.liveCanvas]) {
       if (tr) e.style.transform = tr;
       else e.style.removeProperty('transform');
@@ -1939,6 +2158,21 @@ export class MdInkLayer {
     const zc = c.zoom;
     const tx = (z0 - zc) * sc.offsetLeft + zc * (b.x - c.x);
     const ty = (z0 - zc) * sc.offsetTop + zc * (b.y - c.y);
+    if (this.overlay) {
+      // the ink over the note follows the preview: client point P of the box goes to
+      // E + t + (zc / z0)(P − E), E the box's corner, t the preview's offset
+      if (!this.previewAt) {
+        const er = ed.getBoundingClientRect();
+        const hr = this.inkHost.getBoundingClientRect();
+        this.previewAt = { ex: er.left, ey: er.top, ox: hr.left, oy: hr.top };
+      }
+      const p = this.previewAt;
+      this.inkHost.style.transform = `translate(${p.ex - p.ox + tx}px, ${p.ey - p.oy + ty}px) scale(${zc / z0}) translate(${p.ox - p.ex}px, ${p.oy - p.ey}px)`;
+      if (this.nav) {
+        window.clearTimeout(this.layerTimer);
+        ed.addClass('hn-ink-pinching');
+      }
+    }
     ed.addClass('hn-ink-previewbox');
     ed.style.transform = `translate3d(${tx}px, ${ty}px, 0) scale(${zc})`;
     this.md.contentEl.addClass('hn-ink-previewing');
@@ -2697,9 +2931,13 @@ export class MdInkLayer {
     const sizer = this.sizer;
     const ed = this.view.dom;
     const parent = ed.parentElement;
-    const pan = this.panX ? `translate3d(${this.panX}px, 0, 0)` : '';
+    // a 3D offset would make the note its own layer: blurred inside the scaled box on iPadOS
+    const pan = this.panX ? (this.sharpZoom && this.zoom !== 1 ? `translate(${this.panX}px, 0)` : `translate3d(${this.panX}px, 0, 0)`) : '';
     this.placeHosts();
     ed.removeClass('hn-ink-previewbox');
+    this.inkHost.style.removeProperty('transform');
+    this.previewAt = null;
+    this.applySharp();
     if (this.zoom === 1 || !sizer || !parent) {
       for (const k of ['width', 'height', 'min-width', 'max-width', 'transform', 'transform-origin']) ed.style.removeProperty(k);
       ed.removeClass('hn-ink-zoombox');
@@ -2733,6 +2971,27 @@ export class MdInkLayer {
     sizer.style.setProperty('margin-left', `${Math.max(0, (sc.clientWidth - padL - padR - w) / 2)}px`, 'important');
     if (pan) sizer.style.transform = pan;
     else sizer.style.removeProperty('transform');
+  }
+
+  /**
+   * Sharp zoom (iPadOS). WebKit draws a composited layer inside a scaled element at its unscaled
+   * resolution and magnifies it: the note's scroll layer and the ink canvases were blurred when
+   * zoomed, sharp at 100 %. While zoomed the scaled box therefore holds no composited layer: the
+   * note does not scroll natively (HandNote scrolls it: router, wheel, one finger), the caret does
+   * not blink (an animation is a layer of its own) and the ink is drawn in screen px over the
+   * note, outside the box. At 100 % everything stays native.
+   */
+  private applySharp(): void {
+    const on = this.sharpZoom && this.zoom !== 1 && !this.closed;
+    this.view.dom.toggleClass('hn-ink-sharp', on);
+    if (on === this.overlay) return;
+    this.overlay = on;
+    (on ? this.inkHost : this.clip).append(this.inkCanvas, this.liveCanvas);
+    for (const c of [this.inkCanvas, this.liveCanvas]) c.style.removeProperty('transform');
+    this.cv.w = 0;
+    if (this.active || this.erase) this.placeLive();
+    this.needsInk = true;
+    this.schedule();
   }
 
   /** The overlays (objects, lasso, laser) cover the editor's place in the tab, unscaled. */
@@ -2859,9 +3118,16 @@ export class MdInkLayer {
     render();
     // below the button, inside the window
     const ar = anchor.getBoundingClientRect();
-    menu.style.top = `${Math.round(ar.bottom + 6)}px`;
+    const top = Math.round(ar.bottom + 6);
     const w = Math.max(menu.offsetWidth, 210);
-    menu.style.left = `${Math.round(Math.max(8, Math.min(window.innerWidth - w - 8, ar.right - w)))}px`;
+    const left = Math.round(Math.max(8, Math.min(window.innerWidth - w - 8, ar.right - w)));
+    menu.style.top = `${top}px`;
+    menu.style.left = `${left}px`;
+    // a transformed / filtered ancestor (Obsidian mobile) makes `fixed` relative to itself, not to
+    // the window: correct by where the menu actually landed
+    const mr = menu.getBoundingClientRect();
+    if (Math.abs(mr.top - top) > 0.5) menu.style.top = `${Math.round(2 * top - mr.top)}px`;
+    if (Math.abs(mr.left - left) > 0.5) menu.style.left = `${Math.round(2 * left - mr.left)}px`;
     this.menuEl = menu;
     this.menuAnchor = anchor;
     const opened = performance.now();
@@ -2922,6 +3188,11 @@ export class MdInkLayer {
       },
       onMore: (anchor: HTMLElement) =>
         this.openMenu(anchor, [
+          // MD_EXPORT_EXTENSION_BEGIN
+          { label: t('exportPagePng'), icon: 'image', run: () => this.host.export?.('png') },
+          { label: t('exportPageSvg'), icon: 'shapes', run: () => this.host.export?.('svg') },
+          { label: t('exportPdf'), icon: 'file', run: () => this.host.export?.('pdf') },
+          // MD_EXPORT_EXTENSION_END
           { label: t('mdSaveNow'), icon: 'check', run: () => void this.store.flush() },
           { label: t('mdClear'), icon: 'trash', danger: true, disabled: this.readOnly || !this.strokes.length, run: () => this.clearAll() },
           { label: t('mdExit'), icon: 'close', run: () => this.host.exit() },
@@ -3161,6 +3432,7 @@ export class MdInkLayer {
     this.inertia = null;
     this.laser.destroy();
     this.laserHost.remove();
+    this.fingerPan = null;
     this.closed = true;
     window.cancelAnimationFrame(this.raf);
     window.clearTimeout(this.anchorTimer);
@@ -3188,6 +3460,7 @@ export class MdInkLayer {
       c.height = 0;
     }
     this.clip.remove();
+    this.inkHost.remove();
     this.toolbar.destroy();
     this.bar.remove();
     this.md.contentEl.removeClass('hn-ink-active');

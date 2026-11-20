@@ -63,10 +63,11 @@ const main = read('main.js');
 const requires = [...new Set([...main.matchAll(/require\(["']([^"']+)["']\)/g)].map((m) => m[1]))];
 // Obsidian provides these at runtime (they are external in the official sample plugin too):
 // "obsidian" always, and CodeMirror for editor extensions (Ink on Markdown, 0.12). Nothing else.
-const PROVIDED = ['obsidian', '@codemirror/view', '@codemirror/state'];
+// Optional desktop modules are called only behind native adapter / desktop capability guards.
+const PROVIDED = ['obsidian', '@codemirror/view', '@codemirror/state', 'fs', 'electron', '@electron/remote'];
 check(requires.includes('obsidian') && requires.every((r) => PROVIDED.includes(r)), `main.js requires only modules Obsidian provides (${PROVIDED.join(', ')}; found: ${requires.join(', ') || 'none'})`);
 check(!/\bimport\(/.test(main), 'main.js has no dynamic import()');
-check(!/process\.versions|__dirname|child_process/.test(main), 'main.js uses no Node/Electron-only APIs');
+check(!/process\.versions|__dirname|child_process/.test(main), 'main.js has no unguarded process/path globals or child processes');
 try {
   new vm.Script(main, { filename: 'main.js' });
   ok.push('main.js parses as JavaScript');
@@ -75,7 +76,8 @@ try {
 }
 // 0.6 embeds the offline Chinese stroke templates (~0.63 MB base64, APL) — see vendor/hanzi-mmah
 // ONNX Runtime Web (gzip + base64, ~4.2 MB) is inside main.js since 0.8.0-beta.3
-const maxMain = process.env.HN_EMBED_ORT === '0' ? 2_500_000 : 7_000_000;
+// Includes the bundled DOM renderer used for offline Markdown composite exports.
+const maxMain = process.env.HN_EMBED_ORT === '0' ? 2_800_000 : 7_500_000;
 check(main.length < maxMain, `main.js size ${(main.length / 1024).toFixed(1)} KB (limit ${(maxMain / 1048576).toFixed(1)} MB)`);
 
 // Edition: a public build never contains the private math model; a private build always says so in its banner

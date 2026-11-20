@@ -20,6 +20,8 @@ if (mode === 'production') {
   await ctx.watch();
 } else if (mode === 'lab') {
   await esbuild.build(labConfig);
+  await esbuild.build({ ...labConfig, entryPoints: ['experiments/ink-lab/md-main.ts'],
+    outfile: 'experiments/ink-lab/md-lab.js', alias: { obsidian: './experiments/ink-lab/obsidian-stub.ts' } });
 } else {
   console.error(`unknown mode ${mode}`);
   process.exit(1);

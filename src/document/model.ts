@@ -24,7 +24,7 @@ export const FORMAT_ID = 'obsidian-handnote';
  *      pages are never written as version 7, so undoing a conversion writes the old version again;
  *      0.10 and older open a whiteboard read-only.
  */
-export const FORMAT_VERSION = 7;
+export const FORMAT_VERSION = 8;
 /** Default geometry engine (v0.1 Baseline). */
 export const ENGINE_VERSION = 1;
 /** Fountain Pen Experimental (v0.2). */
@@ -129,9 +129,8 @@ export interface Asset {
 export type DocKind = 'pdf' | 'docx' | 'pptx' | 'xlsx' | 'doc';
 
 /**
- * An imported document (v6). The original file stays a separate file in the vault; the note keeps
- * only this reference (never the file's bytes). `sha256` + `size` identify the file again after a
- * rename or move (see src/import/source.ts).
+ * An imported document: v6 references a vault original; v8 stores original bytes in a ZIP
+ * entry inside the .handnote file. `containerId` binds entries to their owning note after rename.
  */
 export interface DocSource {
   id: string;
@@ -152,6 +151,10 @@ export interface DocSource {
    * (`<file>.handnote-layout.json`, src/import/display-list.ts). PDF pages need none.
    */
   layout?: string;
+  /** ZIP entry inside the .handnote container (original bytes, lossless). */
+  entry?: string;
+  layoutEntry?: string;
+  containerId?: string;
 }
 
 /** The imported page shown under the ink of a page (v6): source id and 1-based page number. */

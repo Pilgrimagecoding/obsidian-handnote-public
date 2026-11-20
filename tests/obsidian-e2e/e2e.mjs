@@ -217,9 +217,9 @@ await step('Markdown embed renders in Reading view and Live Preview; click opens
   await sleep(1500);
   const reading = await page.evaluate(() => {
     const v = app.workspace.activeLeaf.view;
-    return v.containerEl.querySelectorAll('.markdown-reading-view .hn-embed canvas.hn-embed-page').length;
+    return v.containerEl.querySelectorAll('.markdown-reading-view .hn-embed .hn-embed-page > svg.hn-embed-svg').length;
   });
-  assert(reading >= 1, `reading view embed canvases: ${reading}`);
+  assert(reading >= 1, `reading view embed pages: ${reading}`);
   await page.screenshot({ path: 'test-output/obsidian-embed-reading.png' });
   await page.evaluate(async () => {
     const v = app.workspace.activeLeaf.view;
@@ -228,15 +228,15 @@ await step('Markdown embed renders in Reading view and Live Preview; click opens
   await sleep(1500);
   const live = await page.evaluate(() => {
     const v = app.workspace.activeLeaf.view;
-    return v.containerEl.querySelectorAll('.markdown-source-view .hn-embed canvas.hn-embed-page').length;
+    return v.containerEl.querySelectorAll('.markdown-source-view .hn-embed .hn-embed-page > svg.hn-embed-svg').length;
   });
-  assert(live >= 1, `live preview embed canvases: ${live}`);
+  assert(live >= 1, `live preview embed pages: ${live}`);
   await page.screenshot({ path: 'test-output/obsidian-embed-livepreview.png' });
   await page.evaluate(() => app.workspace.activeLeaf.view.containerEl.querySelector('.markdown-source-view .hn-embed').click());
   await sleep(800);
   const t = await page.evaluate(() => app.workspace.activeLeaf.view.getViewType());
   assert(t === 'handnote-view', `click opened ${t}`);
-  return `reading: ${reading} page canvas(es), live preview: ${live}, click -> editor`;
+  return `reading: ${reading} vector page(s), live preview: ${live}, click -> editor`;
 });
 
 await step('sync conflict: external newer revision while dirty is preserved as a conflict copy', async () => {

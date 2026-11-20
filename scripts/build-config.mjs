@@ -18,19 +18,24 @@ export const pluginConfig = {
   target: 'es2020',
   outfile: 'main.js',
   // Provided by the Obsidian app at runtime; everything else must be bundled.
-  external: ['obsidian', 'electron', '@codemirror/*', '@lezer/*'],
+  external: ['obsidian', 'electron', '@electron/remote', 'fs', '@codemirror/*', '@lezer/*'],
   banner: { js: banner },
   logLevel: 'info',
   treeShaking: true,
   legalComments: 'inline',
   minify: false,
+  // PDF generation adds a bundled library. Trim whitespace while retaining identifiers and
+  // inline license notices, keeping release downloads within the existing size budget.
+  minifyWhitespace: true,
   sourcemap: false,
 };
 
 export const labConfig = {
   entryPoints: ['experiments/ink-lab/main.ts'],
+  external: ['fs', 'electron', '@electron/remote'],
   bundle: true,
   ...edition,
+  alias: { ...edition.alias, obsidian: './experiments/ink-lab/obsidian-stub.ts' },
   format: 'iife',
   platform: 'browser',
   target: 'es2020',

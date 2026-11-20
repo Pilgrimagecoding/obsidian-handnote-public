@@ -1,13 +1,16 @@
 import { EN6, EN7, EN8, EN9, ZH6, ZH7, ZH8, ZH9 } from './i18n-v05';
 import { EN10, ZH10 } from './i18n-v09';
 import { EN11, ZH11 } from './i18n-v10';
+import { EN13, ZH13 } from './i18n-v13';
 import { EN12, ZH12 } from './i18n-v11';
 
 /**
- * UI strings (Chinese / English). The language follows Obsidian's interface language (the plugin
- * passes getLanguage()); elsewhere (lab, tests) the document / browser language.
+ * UI strings (Chinese / English). The host applies the saved preference or Obsidian's language;
+ * standalone lab/tests fall back to the document / browser language.
  */
 const ZH: Record<string, string> = {
+  mdExportPreparing: '正在合成 Markdown 正文和批注…',
+  mdExportDescription: '按原排版分段导出正文与批注。长文 PDF 为多页，PNG/SVG 为分段图片 ZIP；SVG 封装高清合成图。',
   pen: '笔',
   fountain: '钢笔',
   pencil: '铅笔',
@@ -139,6 +142,8 @@ const ZH: Record<string, string> = {
 };
 
 const EN: Record<string, string> = {
+  mdExportPreparing: 'Composing Markdown and annotations…',
+  mdExportDescription: 'Preserves layout in tiles. Long notes export as multi-page PDF or PNG/SVG ZIP. SVG wraps a high-resolution composite image.',
   pen: 'Pen',
   fountain: 'Fountain pen',
   pencil: 'Pencil',
@@ -686,7 +691,15 @@ Object.assign(EN, EN11);
 Object.assign(ZH, ZH12);
 Object.assign(EN, EN12);
 
+Object.assign(ZH, ZH13);
+Object.assign(EN, EN13);
+
 let lang: 'zh' | 'en' | null = null;
+const languageListeners = new Set<() => void>();
+export function onLanguageChange(fn: () => void): () => void {
+  languageListeners.add(fn);
+  return () => languageListeners.delete(fn);
+}
 
 /** 'zh' for any Chinese interface language, otherwise 'en'. */
 export function languageOf(code: string | null | undefined): 'zh' | 'en' {
@@ -701,11 +714,17 @@ export function detectLanguage(): 'zh' | 'en' {
 }
 
 export function setLanguage(l: 'zh' | 'en' | null): void {
+  if (lang === l) return;
   lang = l;
+  for (const fn of languageListeners) fn();
 }
 
 export function t(key: string): string {
   if (!lang) lang = detectLanguage();
   const table = lang === 'zh' ? ZH : EN;
   return table[key] ?? EN[key] ?? key;
+}
+
+export function tf(key: string, values: Record<string, string | number>): string {
+  return t(key).replace(/\{(\w+)\}/g, (match, name: string) => name in values ? String(values[name]) : match);
 }

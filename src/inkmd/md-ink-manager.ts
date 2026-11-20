@@ -1,10 +1,12 @@
 import { Compartment } from '@codemirror/state';
 import { ViewPlugin, type EditorView, type ViewUpdate } from '@codemirror/view';
-import { FileView, MarkdownView, Notice, TFile, editorInfoField, type WorkspaceLeaf } from 'obsidian';
-import { annotationPath, isMarkdownPath, parentFolder } from '../document/annotation-path';
+import { FileView, MarkdownView, Notice, TFile, TFolder, editorInfoField, type WorkspaceLeaf } from 'obsidian';
+import { annotationPath, legacyAnnotationPath, relocatedChild, isMarkdownPath } from '../document/annotation-path';
 import { t } from '../ui/i18n';
 import { InkFileStore } from './ink-file';
+import { annotationHasInk } from './auto-open';
 import { MdInkLayer } from './md-ink-layer';
+import { openMarkdownExport } from '../plugin/md-export';
 import type HandNotePlugin from '../plugin/main';
 
 /** View type of 0.12.0-beta.1 (separate annotation view); tabs left in it reopen in the editor. */
@@ -17,13 +19,17 @@ export const LEGACY_MD_INK_VIEW = 'handnote-markdown-ink';
  *   view, removed on unload) toggles the ink of that tab. The note stays in Obsidian's own editor.
  * - An editor extension (`registerEditorExtension`) gives each Markdown editor's EditorView to
  *   this manager and forwards its updates (edits move the ink's lines).
- * - Annotations are saved per note in `HandNote annotations/` (ink-file.ts); one tab writes them
+ * - Annotations are saved beside each note (ink-file.ts); one tab writes them
  *   (another tab on the same note shows them read-only); they follow a renamed note.
  */
 export class MdInkManager {
   private views = new Set<EditorView>();
   private layers = new Map<EditorView, MdInkLayer>();
   private buttons = new Map<MarkdownView, HTMLElement>();
+  private toggleQueue: Promise<void> = Promise.resolve();
+  /** the file each tab last opened (its ink shown automatically once; then the user's choice stands) */
+  private autoSeen = new WeakMap<MarkdownView, string>();
+  private renameQueue: Promise<void> = Promise.resolve();
   /** where an ink layer makes its editor non-editable (Scribble) — empty otherwise */
   private readonly editable = new Compartment();
 
@@ -49,7 +55,11 @@ export class MdInkManager {
             // dispatched while the editor updates)
             if (layer.md.file !== layer.file) {
               const v = this.view;
-              window.setTimeout(() => void mgr.close(v), 0);
+              // only that layer: the next note's ink may be open in this editor by then
+              window.setTimeout(() => {
+                const l = layers.get(v);
+                if (l && l.md.file !== l.file) void mgr.close(v);
+              }, 0);
             } else layer.update(u);
           }
           destroy(): void {
@@ -60,14 +70,24 @@ export class MdInkManager {
       ),
     ]);
     const workspace = plugin.app.workspace;
-    workspace.onLayoutReady(() => this.addButtons());
+    workspace.onLayoutReady(() => {
+      this.addButtons();
+      this.autoOpen();
+    });
     plugin.registerEvent(
       workspace.on('layout-change', () => {
         this.addButtons();
         this.checkLayers();
+        this.autoOpen();
       }),
     );
-    plugin.registerEvent(workspace.on('active-leaf-change', () => this.addButtons()));
+    plugin.registerEvent(
+      workspace.on('active-leaf-change', () => {
+        this.addButtons();
+        this.autoOpen();
+      }),
+    );
+    plugin.registerEvent(workspace.on('file-open', () => this.autoOpen()));
     plugin.registerEvent(
       plugin.app.vault.on('modify', (f) => {
         for (const l of this.layers.values()) if (l.storePath === f.path) void l.externalChange();
@@ -82,12 +102,26 @@ export class MdInkManager {
     // deleted automatically)
     plugin.registerEvent(
       plugin.app.vault.on('rename', (f, oldPath) => {
-        if (f instanceof TFile && isMarkdownPath(f.path) && isMarkdownPath(oldPath)) void this.moveAnnotations(oldPath, f.path, f);
+        const next = f.path;
+        const moves = f instanceof TFile && isMarkdownPath(next) && isMarkdownPath(oldPath)
+          ? [{ file: f, old: oldPath, next }]
+          : f instanceof TFolder ? plugin.app.vault.getFiles()
+            .filter((file) => isMarkdownPath(file.path) && file.path.startsWith(next + '/'))
+            .map((file) => ({ file, old: oldPath + file.path.slice(next.length), next: file.path })) : [];
+        // Folder moves already moved their sidecars. Retarget before an autosave can recreate
+        // the former directory; individual Markdown renames leave the sidecar in its old place.
+        for (const move of moves) for (const layer of this.layers.values()) {
+          if (layer.file === move.file) layer.moved(move.next, f instanceof TFolder
+            ? relocatedChild(layer.storePath, oldPath, next) : layer.storePath);
+        }
+        for (const move of moves) this.renameQueue = this.renameQueue
+          .then(() => this.moveAnnotations(move.old, move.next, move.file))
+          .catch((e) => console.warn('HandNote: moving annotations failed', e));
       }),
     );
-    plugin.addCommand({
+    plugin.addTranslatedCommand({
       id: 'annotate-markdown',
-      name: t('cmd.annotateMarkdown'),
+      name: 'cmd.annotateMarkdown',
       checkCallback: (checking) => {
         const md = workspace.getActiveViewOfType(MarkdownView);
         if (!md?.file) return false;
@@ -105,6 +139,7 @@ export class MdInkManager {
 
   /** Settings changed elsewhere (a HandNote note's toolbar). */
   settingsUpdated(): void {
+    for (const [md, button] of this.buttons) this.setButton(md, button.classList.contains('is-active'));
     for (const l of this.layers.values()) l.settingsUpdated();
   }
 
@@ -155,7 +190,65 @@ export class MdInkManager {
     }
   }
 
-  async toggle(md: MarkdownView): Promise<void> {
+  toggle(md: MarkdownView): Promise<void> {
+    return this.queue(() => this.toggleNow(md));
+  }
+
+  private queue(fn: () => Promise<void>): Promise<void> {
+    const next = this.toggleQueue.then(fn);
+    this.toggleQueue = next.catch((e) => { console.error('HandNote annotation handoff', e); new Notice(t('mdMoveFailed')); });
+    return next;
+  }
+
+  /**
+   * A note with annotations opens with them shown, once per opening in a tab: leaving the
+   * annotation mode keeps it off until another note is opened in that tab. Only in the editing
+   * view (a tab opened in the reading view stays as it is); a note without ink opens normally.
+   */
+  private autoOpen(): void {
+    for (const leaf of this.plugin.app.workspace.getLeavesOfType('markdown')) {
+      const md = leaf.view;
+      if (!(md instanceof MarkdownView) || !md.file) continue;
+      const file = md.file;
+      if (this.autoSeen.get(md) === file.path) continue;
+      const editing = md.getMode() === 'source';
+      // the editor is not attached yet: decided at the next workspace event
+      if (editing && !this.editorViewOf(md)) continue;
+      this.autoSeen.set(md, file.path);
+      if (!editing || this.layerOf(md)?.file === file || [...this.layers.values()].some((l) => l.file === file)) continue;
+      void this.readAnnotation(file.path).then((text) => {
+        const vault = this.plugin.app.vault;
+        if (!annotationHasInk(text, file.path, (p) => vault.getAbstractFileByPath(p) instanceof TFile)) return;
+        return this.queue(async () => {
+          // still this note, still the editing view, ink not opened meanwhile
+          if (md.file !== file || md.getMode() !== 'source' || this.autoSeen.get(md) !== file.path) return;
+          const cur = this.layerOf(md);
+          if (cur?.file === file) return;
+          if (cur) await this.close(cur.view);
+          if ([...this.layers.values()].some((l) => l.file === file)) return;
+          await this.toggleNow(md);
+        });
+      }).catch((e) => console.warn('HandNote: reading annotations failed', e));
+    }
+  }
+
+  /** The note's annotation file (or its pre-beta.10 location), null when there is none. */
+  private async readAnnotation(mdPath: string): Promise<string | null> {
+    const adapter = this.plugin.app.vault.adapter;
+    for (const p of [annotationPath(mdPath), legacyAnnotationPath(mdPath)]) {
+      if (await adapter.exists(p)) return adapter.read(p);
+    }
+    return null;
+  }
+
+  async openAnnotations(path: string, leaf: WorkspaceLeaf): Promise<void> {
+    const file = this.plugin.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) return;
+    await leaf.setViewState({ type: 'markdown', state: { file: path, mode: 'source', source: false }, active: true });
+    if (leaf.view instanceof MarkdownView && !this.isOn(leaf.view)) await this.toggle(leaf.view);
+  }
+
+  private async toggleNow(md: MarkdownView): Promise<void> {
     const cur = this.layerOf(md);
     if (cur) {
       await this.close(cur.view);
@@ -173,7 +266,7 @@ export class MdInkManager {
       new Notice(t('mdNoEditor'), 6000);
       return;
     }
-    // one writer per note: another tab already annotates it
+    // Match public 0.12.3: the existing annotation tab keeps writing ownership.
     const other = [...this.layers.values()].some((l) => l.file === file);
     let layer: MdInkLayer | null = null;
     const plugin = this.plugin;
@@ -191,6 +284,7 @@ export class MdInkManager {
         plugin.broadcastSettings(null);
       },
       exit: () => void this.close(ev),
+      export: format => { if (layer) openMarkdownExport(plugin.app, layer, format); },
     }, this.editable);
     this.layers.set(ev, layer);
     this.setButton(md, true);
@@ -216,27 +310,46 @@ export class MdInkManager {
   }
 
   private async moveAnnotations(oldMd: string, newMd: string, file: TFile): Promise<void> {
-    const from = annotationPath(oldMd);
     const to = annotationPath(newMd);
-    if (from === to) return;
     const open = [...this.layers.values()].filter((l) => l.file === file);
     for (const l of open) await l.flush();
     const app = this.plugin.app;
     const adapter = app.vault.adapter;
+    let from = open[0]?.storePath ?? annotationPath(oldMd);
     try {
+      if (!await adapter.exists(from)) {
+        const legacy = legacyAnnotationPath(oldMd);
+        if (await adapter.exists(legacy)) from = legacy;
+        else if (await adapter.exists(to)) from = to; // moved with its containing folder
+      }
       if (await adapter.exists(from)) {
-        if (await adapter.exists(to)) {
+        if (from !== to && await adapter.exists(to)) {
           new Notice(`HandNote: ${t('mdMoveExists')} "${to}"`, 10000);
           return;
         }
-        let cur = '';
-        for (const part of parentFolder(to) ? parentFolder(to).split('/') : []) {
-          cur = cur ? `${cur}/${part}` : part;
-          if (!(await adapter.exists(cur))) await app.vault.createFolder(cur).catch(() => undefined);
+        const header = JSON.parse((await adapter.read(from)).split('\n')[0].replace(/,\s*$/, '') + '}');
+        if (header.annotates !== oldMd && header.annotates !== newMd) {
+          new Notice(t('mdAnnotationCollision'), 10000);
+          return;
         }
-        const f = app.vault.getAbstractFileByPath(from);
-        if (f instanceof TFile) await app.vault.rename(f, to);
-        else await adapter.rename(from, to);
+        if (from !== to) {
+          const f = app.vault.getAbstractFileByPath(from);
+          if (f instanceof TFile) await app.vault.rename(f, to);
+          else await adapter.rename(from, to);
+        }
+        // Change only annotation metadata; preserve every line of ink verbatim.
+        const updateLink = (text: string) => {
+          const end = text.indexOf('\n');
+          if (end < 0) return text;
+          const h = JSON.parse(text.slice(0, end).replace(/,\s*$/, '') + '}');
+          if (h.annotates !== oldMd) return text;
+          h.annotates = newMd;
+          return JSON.stringify(h).slice(0, -1) + ',' + text.slice(end);
+        };
+        const target = app.vault.getAbstractFileByPath(to);
+        if (target instanceof TFile) await app.vault.process(target, updateLink);
+        // Obsidian normally indexes rename synchronously; unindexed files keep their old
+        // header until InkFileStore loads them, avoiding an unguarded adapter overwrite.
       }
       for (const l of open) l.moved(newMd, to);
     } catch (e) {

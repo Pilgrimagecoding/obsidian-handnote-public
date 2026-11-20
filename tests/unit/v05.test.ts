@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
-import { createDocument, type Stroke } from '../../src/document/model';
+import { FORMAT_VERSION, createDocument, type Stroke } from '../../src/document/model';
 import { parseDocument, requiredVersion, serializeDocument, validateItem } from '../../src/document/codec';
 import { resizeItem, transformItem, type FormulaItem, type Item, type MindMapItem, type ShapeItem } from '../../src/document/items';
 import { DEFAULT_PEN_PARAMS } from '../../src/ink/presets';
@@ -479,7 +479,7 @@ test('0.5 codec: formulas, mind maps and labelled shapes round-trip as format 5;
   assert.equal(mm.root.children[0].id, root.children[0].id, 'topic ids kept');
   assert.equal((items[2] as ShapeItem).label?.text, '是否？');
   // a file from a newer plugin opens read-only
-  const newer = text.replace('"version":5', '"version":8');
+  const newer = text.replace('"version":5', `"version":${FORMAT_VERSION + 1}`);
   assert.equal(parseDocument(newer).readOnly, true);
 });
 

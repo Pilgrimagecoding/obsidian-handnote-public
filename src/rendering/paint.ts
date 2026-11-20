@@ -80,12 +80,12 @@ export function inkPath(s: Pick<Stroke, 'dash' | 'params'>, g: StrokeGeometry): 
 }
 
 /** Draw page paper and background pattern in page-local coordinates (ctx already transformed). */
-export function paintPaper(ctx: CanvasRenderingContext2D, page: Page, pxPerUnit: number, texture = false): void {
+export function paintPaper(ctx: CanvasRenderingContext2D, page: Page, pxPerUnit: number, texture = false, docPainter = paintDocPage): void {
   const bg = page.background;
   ctx.fillStyle = bg.paper;
   ctx.fillRect(0, 0, page.width, page.height);
   // imported document page (v6) under the pattern and the ink; no paper grain over a document
-  const hasDoc = paintDocPage(ctx, page, pxPerUnit);
+  const hasDoc = docPainter(ctx, page, pxPerUnit);
   if (texture && !hasDoc) paintGrain(ctx, page.width, page.height, pxPerUnit);
   paintPattern(ctx, page.width, page.height, bg, pxPerUnit);
 }
@@ -354,14 +354,14 @@ export function framePage(f: BoardFrame): Page {
 }
 
 /** Paint a frame's shadow, paper and document page (world coordinates, ctx in world units). */
-export function paintFrame(ctx: CanvasRenderingContext2D, f: BoardFrame, pxPerUnit: number, shadow: string | null, texture = false): void {
+export function paintFrame(ctx: CanvasRenderingContext2D, f: BoardFrame, pxPerUnit: number, shadow: string | null, texture = false, docPainter = paintDocPage): void {
   ctx.save();
   ctx.translate(f.x, f.y);
   if (shadow) {
     ctx.fillStyle = shadow;
     ctx.fillRect(1.5 / pxPerUnit, 2 / pxPerUnit, f.width, f.height);
   }
-  paintPaper(ctx, framePage(f), pxPerUnit, texture);
+  paintPaper(ctx, framePage(f), pxPerUnit, texture, docPainter);
   ctx.restore();
 }
 

@@ -1,7 +1,7 @@
 // 0.11 infinite whiteboards: format v7, conversion from pages, undo back to the note.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createDocument, createPage, defaultBackground, newId, type HandNoteDocument, type Stroke } from '../../src/document/model';
+import { FORMAT_VERSION, createDocument, createPage, defaultBackground, newId, type HandNoteDocument, type Stroke } from '../../src/document/model';
 import { parseDocument, quantizeSample, recoverDocument, requiredVersion, serializeDocument } from '../../src/document/codec';
 import { History } from '../../src/document/history';
 import { BOARD_MARGIN, FRAME_GAP, boardExtent, contentBounds, convertPagesToBoard, createBoardDocument, framesInOrder, isBoard } from '../../src/document/board';
@@ -140,7 +140,7 @@ test('board: malformed board data is cleaned up, never trusted', () => {
 
 test('board: a whiteboard opens read-only in a version that reads only up to 6 (0.10 behaviour)', () => {
   const doc = createBoardDocument();
-  const v8 = serializeDocument(doc).replace('"version":7', '"version":8');
+  const v8 = serializeDocument(doc).replace('"version":7', `"version":${FORMAT_VERSION + 1}`);
   assert.equal(parseDocument(v8).readOnly, true);
 });
 

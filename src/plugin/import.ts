@@ -1,14 +1,7 @@
-/**
- * Document import in Obsidian (0.9): pick a file (this device or the vault), check what it really
- * is, keep the original as a separate vault file, and create pages that show it under the ink.
- *
- * Rules (docs/IMPORT_ARCHITECTURE.md):
- *  - the original file is never modified and never copied into the .handnote note;
- *  - a file picked from the device is stored once in the vault (Obsidian's attachment folder
- *    setting); the same file already in the vault (same size and SHA-256) is reused;
- *  - everything happens on the device: PDF.js is the copy shipped with Obsidian (loadPdfJs);
- *  - cancel or failure rolls back what this import created (the stored copy, nothing else).
- */
+import { notePackages } from '../storage/note-package';
+/** Import originals losslessly into a single ZIP-backed .handnote package.
+ * Legacy external references remain readable; existing user originals are never deleted.
+ * See docs/NOTE_PACKAGE.md for checkpoints, cancellation and compatibility. */
 import { FuzzySuggestModal, Modal, Notice, Platform, TFile, loadPdfJs, normalizePath, type App } from 'obsidian';
 import { serializeDocument } from '../document/codec';
 import { createDocument, type DocKind, type DocSource } from '../document/model';
@@ -130,7 +123,7 @@ class ImportFailedModal extends Modal {
     copy.addEventListener('click', () => {
       void navigator.clipboard?.writeText(`HandNote import: ${this.name}\nstage: ${this.stage ?? '-'}\n${this.reason}\n${this.detail}`).then(() => new Notice(t('importCopied')));
     });
-    row.createEl('button', { text: 'OK', cls: 'mod-cta' }).addEventListener('click', () => this.close());
+    row.createEl('button', { text: t('OK'), cls: 'mod-cta' }).addEventListener('click', () => this.close());
   }
   onClose(): void {
     this.contentEl.empty();
@@ -422,6 +415,7 @@ export class DocumentImporter {
    * looked for and the reference is updated.
    */
   async readSource(src: DocSource): Promise<ArrayBuffer> {
+    if (src.entry) return notePackages(this.app).entry(src.path, src.entry);
     const f = this.app.vault.getAbstractFileByPath(normalizePath(src.path));
     if (f instanceof TFile) return this.app.vault.readBinary(f);
     const ext = src.path.split('.').pop()?.toLowerCase() ?? '';
@@ -444,6 +438,7 @@ export class DocumentImporter {
    * on the same device; another device's fonts may differ slightly) and stored again.
    */
   async readLayout(src: DocSource): Promise<DisplayList> {
+    if (src.layoutEntry) return parseDisplayList(new TextDecoder().decode(await notePackages(this.app).entry(src.path, src.layoutEntry)));
     const tryRead = async (path: string | undefined): Promise<DisplayList | null> => {
       if (!path) return null;
       const f = this.app.vault.getAbstractFileByPath(normalizePath(path));
@@ -560,7 +555,7 @@ export class DocumentImporter {
 
   /** "Import document…" (command palette, editor menu). */
   open(view: HandNoteView | null): void {
-    new ImportModal(this.app, view, (src, intoNote) => void this.runMany(src, intoNote ? view : null), this.plugin.settings.importFolder).open();
+    new ImportModal(this.app, view, (src, intoNote) => void this.runMany(src, intoNote ? view : null), '').open();
   }
 
   /** Several picked files, one after the other (into this note: one after another, in order). */
@@ -595,8 +590,7 @@ export class DocumentImporter {
     const prog = new ProgressModal(this.app, t('importTitle'));
     prog.open();
     prog.set(fill(t('importReading'), { name }));
-    let stored: TFile | null = null;
-    let layoutFile: TFile | null = null;
+    let newNote: TFile | null = null;
     let stage: Stage = 'read';
     const size = src.vault?.stat.size ?? src.file?.size ?? 0;
     const check = () => {
@@ -662,67 +656,54 @@ export class DocumentImporter {
       if (!sizes.length) throw new ImportError(stage, t('importNoPages'));
       stage = 'store';
       const notePath = into?.file?.path ?? this.plugin.newNotePath(name.replace(/\.[^.]+$/, ''), src.vault ?? null);
-      // the original file: the vault file itself, the same file already in the vault, or a new copy
-      let path: string;
-      if (src.vault) path = src.vault.path;
+      // Lossless package: original bytes and fixed Office layout live inside this note.
+      // Flush existing ink first; conversion rewrites only the small text note, never the PDF.
+      if (into) await into.flush();
+      const doc = into?.getDocument() ?? createDocument({ device: this.plugin.settings.deviceId });
+      const source = makeSource(kind, notePath, byteLength, sha, sizes.length);
+      source.name = name;
+      source.entry = `sources/${sha}.${kind}`;
+      source.containerId = doc.id;
+      if (layout) source.layoutEntry = `sources/${sha}.layout.json`;
+      await this.plugin.ensureFolderOf(notePath);
+      const noteFile = into?.file ?? (newNote = await this.app.vault.create(notePath, serializeDocument(doc)));
+      if (!noteFile) throw new Error('Note closed during import');
+      const packages = notePackages(this.app);
+      if (into) await this.plugin.recovery.backup(doc.id, await packages.read(notePath));
+      await packages.ensure(noteFile);
+      prog.set(fill(t('importStoringMb'), { done: '0', total: mb(byteLength) }));
+      let original: Blob;
+      if (src.file) original = src.file;
       else {
-        const same = await this.findSame(kind, byteLength, sha, prog.ctl.signal);
-        check();
-        if (same) {
-          path = same.path;
-          new Notice(fill(t('importDuplicate'), { path }));
-        } else {
-          // the stored copy carries the extension of what it really is (cloud files sometimes arrive
-          // without one, or with the wrong one), so Obsidian and HandNote recognise it later
-          const base = name.replace(/\.[^.]*$/, '') || 'document';
-          const target = await this.originalPath(`${base}.${kind}`, notePath);
-          // The picked File remains disk-backed. Read it again ONLY when a new copy is needed:
-          // Obsidian createBinary needs a full buffer, but it no longer overlaps PDF.js memory.
-          if (kind === 'pdf') buf = await readPicked(src.file as File, prog.ctl.signal, (done, total) => prog.set(fill(t('importStoringMb'), { done: mb(done), total: mb(total) })));
-          check();
-          stored = await this.app.vault.createBinary(target, buf);
-          if (kind === 'pdf') buf = new ArrayBuffer(0);
-          path = stored.path;
-        }
+        if (kind === 'pdf') buf = await this.app.vault.readBinary(src.vault as TFile);
+        original = new Blob([buf]);
       }
-      check();
-      const source: DocSource = makeSource(kind, path, byteLength, sha, sizes.length);
-      if (layout) {
-        const prior = await this.existingLayout(path, sha);
-        if (prior) {
-          // keep the layout already stored for this file (other notes annotate exactly those pages)
-          source.layout = prior.path;
-          sizes = prior.dl.pages.map((p) => ({ width: p.w, height: p.h }));
-          source.pages = sizes.length;
-          layout = prior.dl;
-        } else {
-          const w = await this.writeLayout(path, layout, sha);
-          layoutFile = w.created;
-          source.layout = w.path;
-        }
-        this.office.forget(source.id);
-      }
+      const entries = [{ name: source.entry, blob: original }];
+      if (layout && source.layoutEntry) entries.push({ name: source.layoutEntry, blob: new Blob([JSON.stringify(layout)]) });
+      await packages.add(notePath, entries, prog.ctl.signal);
+      buf = new ArrayBuffer(0); bytes = new Uint8Array(0); zip = null;
       check();
       stage = 'note';
+      if (into && (into.file !== noteFile || into.getDocument() !== doc || !into.editor)) throw new Cancelled();
       if (into?.editor) {
         placed = { index: into.editor.insertDocumentPages(source, sizes, at), count: sizes.length };
       } else {
-        const doc = createDocument({ device: this.plugin.settings.deviceId });
         doc.pages = documentPages(source, sizes);
         doc.sources = { [source.id]: source };
         await this.plugin.ensureFolderOf(notePath);
-        const file = await this.app.vault.create(notePath, serializeDocument(doc));
-        await this.app.workspace.getLeaf('tab').openFile(file);
+        await packages.write(notePath, serializeDocument(doc), await packages.read(notePath));
+        newNote = null;
+        await this.app.workspace.getLeaf('tab').openFile(noteFile);
       }
+      if (into) await into.flush();
+      newNote = null;
       prog.finish();
       const notes = layout?.notes.length ? '\n' + fill(t('importNotes'), { list: layout.notes.map((n) => t(`dlNote.${n}`)).join(', ') }) : '';
       new Notice(fill(t('importDone'), { n: sizes.length, name: source.name }) + notes, notes ? 10000 : 5000);
       return placed ?? { index: 0, count: sizes.length };
     } catch (e) {
       prog.finish();
-      // roll back what this import created
-      if (layoutFile) await this.app.fileManager.trashFile(layoutFile).catch(() => undefined);
-      if (stored) await this.app.fileManager.trashFile(stored).catch(() => undefined);
+      if (newNote) await this.app.fileManager.trashFile(newNote).catch(() => undefined);
       if (e instanceof Cancelled || (e as { name?: string })?.name === 'AbortError') {
         new Notice(t('importCancelled'));
         return { index: -1, count: 0, cancelled: true };
@@ -738,32 +719,6 @@ export class DocumentImporter {
       }
       return null;
     }
-  }
-
-  /** Where a picked original is stored: the import folder of the settings, else Obsidian's attachment location. */
-  private async originalPath(fileName: string, notePath: string): Promise<string> {
-    const folder = this.plugin.settings.importFolder.trim();
-    if (!folder) return this.app.fileManager.getAvailablePathForAttachment(fileName, notePath);
-    const dir = normalizePath(folder);
-    if (!this.app.vault.getAbstractFileByPath(dir)) await this.app.vault.createFolder(dir).catch(() => undefined);
-    const dot = fileName.lastIndexOf('.');
-    const stem = dot > 0 ? fileName.slice(0, dot) : fileName;
-    const ext = dot > 0 ? fileName.slice(dot) : '';
-    for (let i = 0; i < 1000; i++) {
-      const p = normalizePath(`${dir}/${stem}${i ? ` ${i}` : ''}${ext}`);
-      if (!this.app.vault.getAbstractFileByPath(p)) return p;
-    }
-    throw new Error('no free name in the import folder');
-  }
-
-  /** A vault file with the same extension, size and SHA-256 (the same document imported before). */
-  private async findSame(kind: DocKind, size: number, sha: string, signal?: AbortSignal): Promise<TFile | null> {
-    const cands = this.app.vault.getFiles().filter((f) => f.extension.toLowerCase() === kind && f.stat.size === size).slice(0, 12);
-    for (const c of cands) {
-      if (signal?.aborted) throw new Cancelled();
-      if ((await sha256Hex(await this.app.vault.readBinary(c), signal)) === sha) return c;
-    }
-    return null;
   }
 
   /** Page cache statistics (tests / diagnostics). */

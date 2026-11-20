@@ -1,3 +1,4 @@
+import { openDocumentExport } from '../../src/plugin/pdf-export';
 /**
  * Ink Lab: the HandNote editor running in a plain web page (no Obsidian).
  * Used for Phase 1 prototyping and automated browser tests. Open index.html after `npm run lab`.
@@ -6,7 +7,10 @@ import { HandNoteEditor } from '../../src/editor/handnote-editor';
 import { defaultEditorSettings, sanitizeEditorSettings } from '../../src/editor/settings';
 import { createDocument } from '../../src/document/model';
 import { parseDocument, serializeDocument } from '../../src/document/codec';
-import { setLanguage } from '../../src/ui/i18n';
+import { documentMenuActions } from '../../src/ui/document-actions';
+import { pagesToPdf } from '../../src/rendering/pdf-export';
+import { setDocRenderer, registerSources, setDocCacheBudget, ensureDocPage, docPageImage, docCacheStats } from '../../src/rendering/doc-layer';
+import { setLanguage, t } from '../../src/ui/i18n';
 import { AIService, defaultAISettings, type AISettings } from '../../src/ai/service';
 import type { AIBridge } from '../../src/editor/handnote-editor';
 import { HandwritingRecognitionService } from '../../src/recognition/service';
@@ -205,8 +209,11 @@ const editor = new HandNoteEditor(container, loadDoc(), settings, {
   recognizer,
   exportPage: (index, kind) => exports.push({ index, kind }),
   menuActions: [
+    ...documentMenuActions(() => undefined),
     {
-      label: 'Clear document',
+      get label() { return t('Clear document'); },
+      diagnostic: true,
+      icon: 'trash',
       run: () => {
         localStorage.removeItem(KEY);
         editor.setDocument(createDocument({ pages: 2 }));
@@ -218,6 +225,11 @@ const editor = new HandNoteEditor(container, loadDoc(), settings, {
 
 // test hooks
 (window as unknown as Record<string, unknown>).__hn = {
+  setLanguage,
+  pagesToPdf,
+  openDocumentExport: (format: 'png' | 'svg' | 'pdf', all?: boolean) => openDocumentExport({ vault: { getAbstractFileByPath: () => null } } as any, { file: { basename: 'Export test', parent: { path: '/' } }, editor, getDocument: () => editor.getDocument() } as any, format, all),
+  setDocRenderer, registerSources,
+  setDocCacheBudget, ensureDocPage, docPageImage, docCacheStats,
   local,
   /** a fresh model-database connection (tests of the upgrade / blocked behaviour) */
   idbStore: (blockedMs?: number) => new IdbStore(blockedMs),

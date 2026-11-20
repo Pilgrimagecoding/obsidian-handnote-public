@@ -3,6 +3,7 @@ import { randomDeviceId } from '../storage/sync-guard';
 import { defaultAISettings, sanitizeAISettings, type AISettings } from '../ai/service';
 
 export interface HandNotePluginSettings {
+  language: 'system' | 'zh' | 'en';
   editor: EditorSettings;
   /** Folder for new notes; empty = same folder as the active note (or vault root). */
   newNoteFolder: string;
@@ -25,6 +26,7 @@ export interface HandNotePluginSettings {
 
 export function defaultPluginSettings(): HandNotePluginSettings {
   return {
+    language: 'system',
     editor: defaultEditorSettings(),
     newNoteFolder: '',
     embedMaxPages: 3,
@@ -41,6 +43,7 @@ export function sanitizePluginSettings(raw: unknown): HandNotePluginSettings {
   if (!raw || typeof raw !== 'object') return d;
   const r = raw as Partial<HandNotePluginSettings>;
   return {
+    language: r.language === 'zh' || r.language === 'en' ? r.language : 'system',
     editor: sanitizeEditorSettings(r.editor),
     newNoteFolder: typeof r.newNoteFolder === 'string' ? r.newNoteFolder.replace(/^\/+|\/+$/g, '') : '',
     embedMaxPages: typeof r.embedMaxPages === 'number' && r.embedMaxPages >= 0 ? Math.floor(r.embedMaxPages) : d.embedMaxPages,

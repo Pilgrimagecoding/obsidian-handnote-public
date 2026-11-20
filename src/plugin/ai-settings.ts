@@ -185,7 +185,7 @@ export function renderAISettings(containerEl: HTMLElement, h: AISettingsHost): v
       const info = st.descEl.createDiv({ cls: 'hn-ai-model-info' });
       info.createDiv({ text: `${t('aiProvider')}: ${prof ? `${prof.name} (${PROVIDER_TYPE_LABEL[prof.type]})` : '—'}` });
       if (prof) {
-        const k = info.createDiv({ text: 'API key: ' });
+        const k = info.createDiv({ text: t('API key') + ': ' });
         keyStatus(k, h, prof);
       }
       info.createDiv({ text: `${t('aiModelId')}: ${entry.model}` });
@@ -365,7 +365,7 @@ class ProfileModal extends Modal {
         });
       });
     if (d.type !== 'mock') {
-      const key = new Setting(contentEl).setName('API key');
+      const key = new Setting(contentEl).setName(t('API key'));
       key.descEl.createDiv({ text: t('aiKeyDesc') });
       const help = KEY_HELP[d.type];
       if (help) {
@@ -406,7 +406,7 @@ class ProfileModal extends Modal {
           );
       }
       new Setting(contentEl)
-        .setName('Base URL')
+        .setName(t('Base URL'))
         .setDesc(d.type === 'openai-compatible' ? t('aiBaseUrlCompatDesc') : `${t('aiBaseUrlDesc')} ${DEFAULT_BASE_URL[d.type]}`)
         .addText((tx) => tx.setPlaceholder(DEFAULT_BASE_URL[d.type] || 'https://…/v1').setValue(d.baseUrl ?? '').onChange((v) => (d.baseUrl = v.trim())));
     }

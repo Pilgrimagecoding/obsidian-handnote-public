@@ -1,3 +1,4 @@
+import { notePackages } from '../storage/note-package';
 import {
   Menu,
   Modal,
@@ -14,16 +15,16 @@ import {
   requestUrl,
   type App,
   type Editor,
+  type Command,
   getLanguage,
 } from 'obsidian';
 import { serializeDocument } from '../document/codec';
 import { createDocument, defaultBackground, paperById, PAPER_PRESETS, type BackgroundKind } from '../document/model';
 import { createBoardDocument } from '../document/board';
 import { GeometryCache } from '../document/geometry-cache';
-import { framePage, pageRenderBox, renderPageToCanvas } from '../rendering/paint';
-import { pageToSvg } from '../rendering/svg-export';
+import { framePage, renderPageToCanvas } from '../rendering/paint';
 import { preloadImages, setImageResolver } from '../rendering/items-paint';
-import { languageOf, setLanguage, t } from '../ui/i18n';
+import { languageOf, setLanguage, onLanguageChange, t, tf } from '../ui/i18n';
 import { AIService } from '../ai/service';
 import { myscriptHttp, obsidianHttp, renderAISettings, secretStorage, secretsSupported } from './ai-settings';
 import type { AIBridge, HandNoteEditor } from '../editor/handnote-editor';
@@ -45,6 +46,7 @@ import { EXTENSION, HandNoteView, VIEW_TYPE } from './view';
 import { DocumentImporter, IMPORT_EXTENSIONS } from './import';
 import { ensureDocPage } from '../rendering/doc-layer';
 import { MdInkManager } from '../inkmd/md-ink-manager';
+import { openPdfExport, openDocumentExport } from './pdf-export';
 
 export default class HandNotePlugin extends Plugin {
   /** Markdown embeds of handwritten notes (exposed for tests: mount counter). */
@@ -65,6 +67,11 @@ export default class HandNotePlugin extends Plugin {
     await this.saveData(this.settings);
     const dir = normalizePath(`${this.app.vault.configDir}/plugins/${this.manifest.id}`);
     this.recovery = new RecoveryStore(this.app.vault.adapter, dir, this.settings.backupsPerNote);
+    // A sync provider may preserve both size and mtime. Its modify event must still invalidate
+    // the package checkpoint cache before views compare their revisions.
+    this.registerEvent(this.app.vault.on('modify', f => notePackages(this.app).invalidate(f.path)));
+    this.registerEvent(this.app.vault.on('delete', f => notePackages(this.app).invalidate(f.path)));
+    this.registerEvent(this.app.vault.on('rename', (f, old) => { notePackages(this.app).invalidate(old); notePackages(this.app).invalidate(f.path); }));
 
     // Images in notes are vault attachments; load them as blob URLs (same-origin, so PNG export
     // and canvas reads are not blocked by a tainted canvas).
@@ -83,7 +90,7 @@ export default class HandNotePlugin extends Plugin {
       setImageResolver(async (s) => s);
     });
     // the interface language Obsidian reports (Settings → General → Language)
-    setLanguage(languageOf(getLanguage()));
+    setLanguage(this.settings.language === 'system' ? languageOf(getLanguage()) : this.settings.language);
     this.ai = new AIService({
       settings: () => this.settings.ai,
       saveSettings: (a) => {
@@ -152,35 +159,36 @@ export default class HandNotePlugin extends Plugin {
     }
 
     // 0.11: the ribbon icon asks what to create — a handwritten note or an infinite whiteboard
-    this.addRibbonIcon('pen-tool', t('newNoteKind') + ' HandNote', (evt) => {
+    const ribbon = this.addRibbonIcon('pen-tool', t('newNoteKind') + ' HandNote', (evt) => {
       const menu = new Menu();
       menu.addItem((i) => i.setTitle(t('newNote')).setIcon('pen-tool').onClick(() => void this.createAndOpen('note')));
       menu.addItem((i) => i.setTitle(t('newBoard')).setIcon('frame').onClick(() => void this.createAndOpen('board')));
       menu.showAtMouseEvent(evt);
     });
+    this.register(onLanguageChange(() => ribbon.setAttribute('aria-label', t('newNoteKind') + ' HandNote')));
     this.importer = new DocumentImporter(this);
-    this.addCommand({
+    this.addTranslatedCommand({
       id: 'import-document',
       name: 'Import document (PDF, Word, PowerPoint, Excel) for annotation',
       callback: () => this.importer.open(this.app.workspace.getActiveViewOfType(HandNoteView)),
     });
 
-    this.addCommand({
+    this.addTranslatedCommand({
       id: 'create',
       name: 'New handwritten note',
       callback: () => void this.createAndOpen(),
     });
-    this.addCommand({
+    this.addTranslatedCommand({
       id: 'create-board',
-      name: t('cmd.newBoard'),
+      name: 'cmd.newBoard',
       callback: () => void this.createAndOpen('board'),
     });
-    this.addCommand({
+    this.addTranslatedCommand({
       id: 'local-selftest',
       name: 'Local recognition self-test (on this device)',
       callback: () => openSelfTest(this.app, this.local),
     });
-    this.addCommand({
+    this.addTranslatedCommand({
       id: 'create-in-folder',
       name: 'New handwritten note in the current folder',
       callback: () => {
@@ -188,7 +196,7 @@ export default class HandNotePlugin extends Plugin {
         void this.createInFolder(f?.parent ?? this.app.vault.getRoot());
       },
     });
-    this.addCommand({
+    this.addTranslatedCommand({
       id: 'embed-images',
       name: 'Embed attachment images into the current handwritten note',
       checkCallback: (checking) =>
@@ -218,7 +226,7 @@ export default class HandNotePlugin extends Plugin {
         });
       }),
     );
-    this.addCommand({
+    this.addTranslatedCommand({
       id: 'create-and-embed',
       name: 'Insert new handwritten note at cursor',
       editorCallback: (editor: Editor, view) => {
@@ -226,26 +234,30 @@ export default class HandNotePlugin extends Plugin {
         new NameModal(this.app, base, (name) => void this.createAndEmbed(editor, view.file ?? null, name)).open();
       },
     });
-    this.addCommand({
+    this.addTranslatedCommand({
       id: 'undo',
       name: 'Undo (handwriting)',
       checkCallback: (checking) => this.withView(checking, (v) => v.editor?.undo()),
     });
-    this.addCommand({
+    this.addTranslatedCommand({
       id: 'redo',
       name: 'Redo (handwriting)',
       checkCallback: (checking) => this.withView(checking, (v) => v.editor?.redo()),
     });
-    this.addCommand({
+    this.addTranslatedCommand({
       id: 'export-png',
       name: 'Export current page as PNG',
       checkCallback: (checking) => this.withView(checking, (v) => void this.exportPage(v, 'png')),
     });
-    this.addCommand({
+    this.addTranslatedCommand({
       id: 'export-svg',
       name: 'Export current page as SVG',
       checkCallback: (checking) => this.withView(checking, (v) => void this.exportPage(v, 'svg')),
     });
+    this.addTranslatedCommand({ id: 'export-pdf', name: 'exportPdf',
+      checkCallback: (checking) => this.withView(checking, (v) => this.exportPdf(v)), });
+    this.addTranslatedCommand({ id: 'save-now', name: 'saveNow',
+      checkCallback: (checking) => this.withView(checking, (v) => void v.flush()), });
     // 0.10: every tool and page action as a command, so it can get its own hotkey
     // (Settings → Hotkeys → search "HandNote"). The single keys in the editor (1/2/3/E/T/L/H) stay.
     const tools: [string, Tool][] = [
@@ -259,9 +271,9 @@ export default class HandNotePlugin extends Plugin {
       ['hand', 'hand'],
     ];
     for (const [id, tool] of tools) {
-      this.addCommand({
+      this.addTranslatedCommand({
         id: `tool-${id}`,
-        name: t(`cmd.${id}`),
+        name: `cmd.${id}`,
         checkCallback: (checking) => this.withView(checking, (v) => v.editor?.setTool(tool)),
       });
     }
@@ -283,9 +295,9 @@ export default class HandNotePlugin extends Plugin {
       ['nextFrame', (e) => e.stepFrame(1), 'board'],
     ];
     for (const [id, run, when] of pageCmds) {
-      this.addCommand({
+      this.addTranslatedCommand({
         id: id.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase()),
-        name: t(`cmd.${id}`),
+        name: `cmd.${id}`,
         checkCallback: (checking) => {
           const v = this.app.workspace.getActiveViewOfType(HandNoteView);
           const e = v?.editor;
@@ -295,7 +307,7 @@ export default class HandNotePlugin extends Plugin {
         },
       });
     }
-    this.addCommand({
+    this.addTranslatedCommand({
       id: 'toggle-hud',
       name: 'Toggle performance overlay',
       callback: () => {
@@ -349,6 +361,15 @@ export default class HandNotePlugin extends Plugin {
     if (!v) return false;
     if (!checking) fn(v);
     return true;
+  }
+
+  addTranslatedCommand(command: Command): void {
+    const key = command.name;
+    const label = t(key);
+    const registered = this.addCommand({ ...command, name: label });
+    // Obsidian may prefix command names with "HandNote: ". Preserve that prefix on refresh.
+    const prefix = registered.name.endsWith(label) ? registered.name.slice(0, -label.length) : '';
+    this.register(onLanguageChange(() => { registered.name = prefix + t(key); }));
   }
 
   queueSaveSettings(): void {
@@ -523,7 +544,7 @@ export default class HandNotePlugin extends Plugin {
     const link = this.app.fileManager.generateMarkdownLink(file, context?.path ?? '');
     const embed = link.startsWith('!') ? link : `!${link}`;
     editor.replaceSelection(`${embed}\n`);
-    new Notice(`Created ${file.name}`);
+    new Notice(tf('createdNotice', { name: file.name }));
     await this.app.workspace.getLeaf('tab').openFile(file);
   }
 
@@ -552,52 +573,18 @@ export default class HandNotePlugin extends Plugin {
     canvas.width = 0;
     canvas.height = 0;
     if (!blob) {
-      new Notice('HandNote: PNG export failed');
+      new Notice(t('exportPngFailed'));
       return;
     }
     await this.app.vault.createBinary(path, await blob.arrayBuffer());
-    new Notice(`Exported ${path}`);
+    new Notice(t('exportDone').replace('{path}', path));
   }
 
-  async exportPage(view: HandNoteView, kind: 'png' | 'svg', index?: number): Promise<void> {
-    const doc = view.getDocument();
-    const file = view.file;
-    if (!doc || !file || !view.editor) return;
-    const idx = index ?? view.editor.currentPageIndex();
-    const page = doc.pages[idx];
-    if (!page) return;
-    const folder = file.parent?.path && file.parent.path !== '/' ? `${file.parent.path}/` : '';
-    // a whiteboard is exported whole: no page number in the name
-    const stem = page.board ? file.basename : `${file.basename} p${idx + 1}`;
-    let path = normalizePath(`${folder}${stem}.${kind}`);
-    let i = 2;
-    while (this.app.vault.getAbstractFileByPath(path)) path = normalizePath(`${folder}${stem} (${i++}).${kind}`);
-    const geo = view.editor.cache ?? new GeometryCache();
-    if (kind === 'svg') {
-      await this.app.vault.create(path, pageToSvg(page, geo));
-    } else {
-      const canvas = document.createElement('canvas');
-      await preloadImages(page);
-      let scale = 3;
-      if (page.board) {
-        // whiteboard: the content bounds, as large as the device can draw (≤ 8192 px a side, 16 Mpx)
-        const box = pageRenderBox(page, geo);
-        scale = Math.min(3, BOARD_EXPORT_SIDE / Math.max(box.w, box.h), Math.sqrt(BOARD_EXPORT_PIXELS / (box.w * box.h)));
-        for (const f of page.board.frames) if (f.doc) await ensureDocPage(framePage(f), scale);
-        if (scale < 1) new Notice(t('exportScaled').replace('{p}', String(Math.max(1, Math.round(scale * 100)))));
-      } else await ensureDocPage(page, 3);
-      renderPageToCanvas(canvas, page, geo, scale);
-      const blob: Blob | null = await new Promise((res) => canvas.toBlob(res, 'image/png'));
-      canvas.width = 0;
-      canvas.height = 0;
-      if (!blob) {
-        new Notice('HandNote: PNG export failed');
-        return;
-      }
-      await this.app.vault.createBinary(path, await blob.arrayBuffer());
-    }
-    new Notice(`Exported ${path}`);
-  }
+  async exportPage(view: HandNoteView, kind: 'png' | 'svg', index?: number): Promise<void> { openDocumentExport(this.app, view, kind, index === undefined ? undefined : false, index); }
+
+  exportDocument(view: HandNoteView, kind: 'png' | 'svg' | 'pdf', all?: boolean): void { openDocumentExport(this.app, view, kind, all); }
+
+  exportPdf(view: HandNoteView): void { openPdfExport(this.app, view); }
 }
 
 /** Largest whiteboard PNG: a side and the pixel count iPad Safari can still draw into a canvas. */
@@ -618,7 +605,7 @@ class NameModal extends Modal {
     super(app);
   }
   onOpen(): void {
-    this.titleEl.setText('New handwritten note');
+    this.titleEl.setText(t('New handwritten note'));
     const input = this.contentEl.createEl('input', { type: 'text', value: this.initial, cls: 'hn-name-input' });
     const submit = () => {
       const v = input.value.trim();
@@ -630,7 +617,7 @@ class NameModal extends Modal {
       if (e.key === 'Enter') submit();
     });
     const row = this.contentEl.createDiv({ cls: 'modal-button-container' });
-    row.createEl('button', { text: 'Create', cls: 'mod-cta' }).onclick = submit;
+    row.createEl('button', { text: t('Create'), cls: 'mod-cta' }).onclick = submit;
     window.setTimeout(() => input.select(), 0);
   }
   onClose(): void {
@@ -675,6 +662,17 @@ class HandNoteSettingTab extends PluginSettingTab {
       );
     };
 
+    new Setting(containerEl)
+      .setName(t('set.language')).setDesc(t('set.languageDesc'))
+      .addDropdown((d) => d.addOption('system', t('set.language.system'))
+        .addOption('zh', '中文').addOption('en', 'English').setValue(s.language)
+        .onChange((value) => {
+          s.language = value === 'zh' || value === 'en' ? value : 'system';
+          setLanguage(s.language === 'system' ? languageOf(getLanguage()) : s.language);
+          save();
+          this.display();
+        }));
+
     section('set.notes');
     new Setting(containerEl)
       .setName(t('set.folder'))
@@ -686,7 +684,7 @@ class HandNoteSettingTab extends PluginSettingTab {
         }),
       );
     new Setting(containerEl).setName(t('set.paper')).addDropdown((d) => {
-      for (const pp of PAPER_PRESETS) d.addOption(pp.id, pp.label);
+      for (const pp of PAPER_PRESETS) d.addOption(pp.id, t(pp.label));
       d.setValue(s.editor.newPagePaper).onChange((v) => {
         s.editor.newPagePaper = v;
         save();
@@ -768,15 +766,6 @@ class HandNoteSettingTab extends PluginSettingTab {
             s.editor.imageStorage = v === 'attachment' ? 'attachment' : 'embed';
             save();
           }),
-      );
-    new Setting(containerEl)
-      .setName(t('set.importFolder'))
-      .setDesc(t('set.importFolderDesc'))
-      .addText((tx) =>
-        tx.setValue(s.importFolder).onChange((v) => {
-          s.importFolder = v.trim().replace(/^\/+|\/+$/g, '');
-          save();
-        }),
       );
     new Setting(containerEl)
       .setName(t('set.embedPages'))

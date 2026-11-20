@@ -66,11 +66,21 @@ export function onTap(elm: HTMLElement, fn: (e: Event) => void, opts: TapOptions
     window.clearTimeout(longTimer);
   };
   const disabled = () => (elm as HTMLButtonElement).disabled === true || elm.getAttribute('aria-disabled') === 'true';
+  // Markdown controls use public 0.12.3's tap behavior. Ordinary HandNote controls
+  // keep their newer pointer capture handling. Evaluate after panels are mounted.
+  const publicMarkdown = () => !!elm.closest('.is-markdown, .hn-ink-poproot, .hn-ink-objhost, .hn-ink-selbar, .hn-ink-menu');
   elm.addEventListener('pointerdown', (e) => {
     if (e.button > 0 || disabled()) return;
+    const md = publicMarkdown();
+    if (!md && down && down.id !== e.pointerId) return;
+    // Pencil taps must not first focus/hover the button or be handed to native scrolling.
+    if (!md && e.pointerType === 'pen' && e.cancelable) e.preventDefault();
+    if (!md) clear();
     down = { id: e.pointerId, x: e.clientX, y: e.clientY };
     longFired = false;
     elm.classList.add('is-pressed');
+    // A small wobble may end outside the icon. Keep the matching pointerup on this button.
+    if (!md) { try { elm.setPointerCapture(e.pointerId); } catch { /* synthetic / older WebView */ } }
     if (opts.onLongPress) {
       longTimer = window.setTimeout(() => {
         if (!down) return;
@@ -88,6 +98,7 @@ export function onTap(elm: HTMLElement, fn: (e: Event) => void, opts: TapOptions
   });
   elm.addEventListener('pointerup', (e) => {
     const d = down;
+    if (!publicMarkdown() && (!d || e.pointerId !== d.id)) return;
     clear();
     if (!d || e.pointerId !== d.id || longFired || disabled()) {
       if (!d) return;
@@ -102,11 +113,15 @@ export function onTap(elm: HTMLElement, fn: (e: Event) => void, opts: TapOptions
     lastTap = { x: e.clientX, y: e.clientY, t: firedAt };
     fn(e);
   });
-  elm.addEventListener('pointercancel', () => {
+  elm.addEventListener('pointercancel', (e) => {
+    if (!publicMarkdown() && down?.id !== e.pointerId) return;
     if (down) rejectedAt = performance.now();
     clear();
   });
-  elm.addEventListener('lostpointercapture', () => elm.classList.remove('is-pressed'));
+  elm.addEventListener('lostpointercapture', (e) => {
+    if (publicMarkdown()) { elm.classList.remove('is-pressed'); return; }
+    if (down?.id === e.pointerId) { rejectedAt = performance.now(); clear(); }
+  });
   elm.addEventListener('click', (e) => {
     e.preventDefault();
     const now = performance.now();

@@ -1042,11 +1042,22 @@
   padding: 6px;
 }
 .hn-embed-page {
+  position: relative;
   display: block;
   width: 100%;
   height: auto;
+  overflow: hidden;
   background: #fff;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+}
+/* vector page (ink, text, formulas) over an imported document's bitmap, if any */
+.hn-embed-page > .hn-embed-svg,
+.hn-embed-page > canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 .hn-embed-footer {
   font-size: 12px;
@@ -2877,6 +2888,24 @@ textarea.hn-input {
 .hn-ink-laserhost .hn-laser {
   position: absolute;
 }
+/* sharp zoom (iPadOS): the ink over the visible part of the note, unscaled (see applySharp) */
+.hn-ink-overhost {
+  position: absolute;
+  pointer-events: none;
+  z-index: 4;
+  overflow: hidden;
+  transform-origin: 0 0;
+}
+.hn-ink-overhost:empty {
+  display: none;
+}
+/* no composited layer inside the scaled box: no native scroll layer, no blinking caret layer */
+.cm-editor.hn-ink-sharp .cm-scroller {
+  overflow: hidden !important;
+}
+.cm-editor.hn-ink-sharp .cm-cursorLayer {
+  animation: none !important;
+}
 .hn-editor .hn-ps-menu.hn-ink-menu {
   position: fixed;
   z-index: var(--layer-menu, 65);
@@ -2918,21 +2947,19 @@ textarea.hn-input {
 .hn-editor.is-markdown .hn-next {
   display: none;
 }
-.hn-editor button.hn-done-btn {
-  height: 30px;
-  min-height: 0;
-  margin-left: 4px;
-  padding: 0 12px;
-  border: none;
-  border-radius: 15px;
-  background: var(--hn-accent, var(--interactive-accent));
-  box-shadow: none;
-  color: var(--text-on-accent, #fff);
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-}
 .view-action.hn-md-action.is-active {
   color: var(--interactive-accent);
   background-color: var(--background-modifier-hover);
 }
+
+/* Keep diagnostics available without crowding everyday document actions. */
+.hn-diagnostics-fold > summary { padding: 12px 8px; cursor: pointer; color: var(--text-muted); }
+
+/* Tool taps are controls, not scroll gestures; iPad decides touch-action at pointerdown. */
+.hn-editor:not(.is-markdown) .hn-toolbar .hn-btn,
+.hn-editor:not(.is-markdown) .hn-subbar .hn-btn,
+.hn-editor:not(.is-markdown) .hn-subbar .hn-swatch { touch-action: none; }
+
+.hn-export-range { padding-left: 24px; background: var(--background-secondary); }
+.hn-ps-head .hn-ps-filter { padding: 0; flex: 1; min-width: 0; }
+.hn-export-choices > [aria-expanded="true"] .hn-row-chevron { transform: rotate(90deg); }

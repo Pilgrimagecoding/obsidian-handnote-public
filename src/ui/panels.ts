@@ -551,7 +551,7 @@ export interface MoreMenuModel {
   texture: boolean;
   canDeletePage: boolean;
   readOnly: boolean;
-  actions: { label: string; run: () => void }[];
+  actions: { label: string; icon?: string; diagnostic?: boolean; children?: { label: string; run: () => void }[]; run: () => void }[];
   /** 0.11.1: the current page is bookmarked ("Add to favorites" / "Remove from favorites"). */
   bookmarked?: boolean;
   onBookmark?: () => void;
@@ -593,7 +593,19 @@ export function renderMoreMenu(host: HTMLElement, m: MoreMenuModel): void {
   }
   if (m.actions.length) {
     const ex = el('div', 'hn-list hn-card', host);
-    for (const a of m.actions) listRow(ex, 'export', a.label, run(a.run));
+    for (const a of m.actions.filter((a) => !a.diagnostic)) {
+      if (!a.children) { listRow(ex, a.icon ?? 'export', a.label, run(a.run)); continue; }
+      const group = el('div', 'hn-export-choices', ex);
+      const row = listRow(group, a.icon ?? 'export', a.label, () => {
+        const open = choices.classList.contains('hn-hidden');
+        for (const other of ex.querySelectorAll('.hn-export-range')) other.classList.add('hn-hidden');
+        for (const other of ex.querySelectorAll('[aria-expanded]')) other.setAttribute('aria-expanded', 'false');
+        choices.classList.toggle('hn-hidden', !open); row.setAttribute('aria-expanded', String(open));
+      }, { chevron: true });
+      row.setAttribute('aria-expanded', 'false');
+      const choices = el('div', 'hn-export-range hn-hidden', group);
+      for (const choice of a.children) listRow(choices, 'pages', choice.label, run(choice.run));
+    }
   }
   const del = el('div', 'hn-list hn-card', host);
   // clear: two taps (the first one arms it for 3 s), undoable
@@ -643,7 +655,10 @@ export function renderMoreMenu(host: HTMLElement, m: MoreMenuModel): void {
   toggleRow(st, 'spark', t('predictedInk'), m.usePrediction, (v) => m.onToggle('usePrediction', v));
   toggleRow(st, 'highlighter', t('highlighterStraight'), m.highlighterStraight, (v) => m.onToggle('highlighterStraight', v));
   toggleRow(st, 'grain', t('paperGrain'), m.texture, (v) => m.onTexture(v));
-  const dg = el('div', 'hn-list hn-card', host);
+  const diagnostics = el('details', 'hn-diagnostics-fold', host);
+  el('summary', '', diagnostics, t('diagnosticsSection'));
+  const dg = el('div', 'hn-list hn-card', diagnostics);
+  for (const a of m.actions.filter((a) => a.diagnostic)) listRow(dg, a.icon ?? 'pulse', a.label, run(a.run));
   toggleRow(dg, 'pulse', t('diagnostics'), m.diagnostics, (v) => m.onToggle('diagnostics', v));
   listRow(dg, 'copy', t('copyDiagnostics'), run(m.onCopyDiagnostics));
   listRow(dg, 'trash', t('clearDiagnostics'), run(m.onClearDiagnostics));

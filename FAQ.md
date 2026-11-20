@@ -29,17 +29,19 @@ neat Chinese without any download.
 
 ### Can I annotate PDF, Word, PowerPoint or Excel files?
 
-Yes, since 0.9.0: **Import document…** or right-click a file → **Annotate in HandNote**. Details
-below and in the [README](README.md#annotate-pdf-word-powerpoint-and-excel).
+Yes, since 0.9.0: **Import document…** or right-click a file → **Annotate in HandNote**. New imports preserve the original bytes and ink in one
+`.handnote` file. Existing external-source notes remain compatible. No new `HandNote imports`
+copy is created; older source files are not automatically deleted. Update all devices to 0.12.4
+or a compatible later version before opening new packaged imports.
 
 ### Can I write by hand on my Markdown notes?
 
 Yes, since 0.12.1. Tap the HandNote pen icon at the top right of a Markdown note (or run *Turn
 HandNote annotation on / off for the current Markdown note*) and write on it in Obsidian's own
 editor; a finger tap on the text lets you type. The `.md` file is never changed: the ink is saved in
-`HandNote annotations/<path of the note>.handnote`, follows its line when you add or delete lines
+`Note.md.handnote` beside `Note.md`, follows its line when you add or delete lines
 above, and moves with the note when you rename it. The ink shows in the editing view only, and
-annotated Markdown notes cannot be exported as PNG / PDF yet.
+the More menu exports the Markdown and annotations together as PDF, PNG or SVG. Notes with existing annotations open annotation mode automatically in editing view.
 
 ### Is it free and open source?
 

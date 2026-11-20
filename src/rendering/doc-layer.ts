@@ -76,6 +76,19 @@ export function sourceById(id: string): DocSource | undefined {
   return sources.get(id);
 }
 
+/** Export owns these pixels until release; screen-cache eviction must never discard them. */
+export async function renderDocForExport(page: Page, scale: number, signal?: AbortSignal): Promise<RenderedPage | null> {
+  signal?.throwIfAborted();
+  if (!page.doc) return null;
+  const src = sources.get(page.doc.src);
+  if (!src || !renderer) throw new DocError('missing', 'Document source unavailable');
+  const result = await renderer.render(src, page.doc.n,
+    Math.max(1, Math.round(page.width * scale)), Math.max(1, Math.round(page.height * scale)),
+    signal ?? new AbortController().signal);
+  if (signal?.aborted) { result.release?.(); signal.throwIfAborted(); }
+  return result;
+}
+
 /** Called after a page finished rendering (the editor / embeds repaint). */
 export function onDocLayerReady(fn: () => void): () => void {
   listeners.add(fn);
@@ -375,7 +388,8 @@ export function paintDocPage(ctx: CanvasRenderingContext2D, page: Page, pxPerUni
  * afterwards paintDocPage draws it instead of a placeholder. Resolves false when it cannot be
  * rendered (the placeholder with the reason is drawn then).
  */
-export async function ensureDocPage(page: Page, pxPerUnit: number): Promise<boolean> {
+export async function ensureDocPage(page: Page, pxPerUnit: number, signal?: AbortSignal): Promise<boolean> {
+  signal?.throwIfAborted();
   const d = page.doc;
   if (!d || !renderer) return false;
   const src = sources.get(d.src);
@@ -384,11 +398,13 @@ export async function ensureDocPage(page: Page, pxPerUnit: number): Promise<bool
   const key = `${d.src}|${d.n}|${bucket}`;
   if (cache.has(key)) return true;
   try {
-    const r = await renderer.render(src, d.n, Math.round(page.width * bucket), Math.round(page.height * bucket), new AbortController().signal);
+    const r = await renderer.render(src, d.n, Math.round(page.width * bucket), Math.round(page.height * bucket), signal ?? new AbortController().signal);
+    if (signal?.aborted) { r.release?.(); signal.throwIfAborted(); }
     cache.set(key, { key, src: d.src, n: d.n, bucket, page: r, pixels: r.width * r.height, used: ++tick });
     evict();
     return true;
   } catch (err) {
+    signal?.throwIfAborted();
     const e = err instanceof DocError ? err : new DocError('failed', String((err as Error)?.message ?? err));
     failures.set(e.code === 'failed' ? `${d.src}|${d.n}` : d.src, e);
     return false;

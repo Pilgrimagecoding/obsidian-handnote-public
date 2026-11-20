@@ -123,22 +123,10 @@ export class PagesSidebar {
     close.title = t('close');
     setHnIcon(close, 'close');
     onTap(close, () => this.m.onClose());
-    if (this.m.hasContents?.()) {
-      // 0.10: [Pages | Contents] instead of the plain title
-      this.titleEl.classList.add('is-hidden');
-      const seg = el('div', 'hn-ps-tabs', head);
-      head.insertBefore(seg, close);
-      const tab = (label: string, mode: 'pages' | 'contents') => {
-        const b = el('button', 'hn-ps-tab', seg, label);
-        b.type = 'button';
-        onTap(b, () => this.setMode(mode));
-        return b;
-      };
-      this.tabs = { pages: tab(t('pages'), 'pages'), contents: tab(t('contents'), 'contents') };
-      this.tabs.pages.classList.add('is-active');
-    }
+    this.titleEl.classList.add('is-hidden');
     // 0.11.1: "All pages ⌄" / "Bookmarks only ⌄" filter above the grid
-    this.filterBar = el('div', 'hn-ps-filter', this.el);
+    this.filterBar = el('div', 'hn-ps-filter', head);
+    head.insertBefore(this.filterBar, close);
     this.filterBtn = el('button', 'hn-ps-filter-btn', this.filterBar);
     this.filterBtn.type = 'button';
     this.filterBtn.setAttribute('aria-haspopup', 'menu');
@@ -162,7 +150,7 @@ export class PagesSidebar {
 
   /** Show the page grid or the contents (bookmarks) of the note's documents. */
   setMode(mode: 'pages' | 'contents'): void {
-    if (mode === 'contents' && !this.m.contents) return;
+    if (mode === 'contents' && !this.tabs) return;
     this.mode = mode;
     this.tabs?.pages.classList.toggle('is-active', mode === 'pages');
     this.tabs?.contents.classList.toggle('is-active', mode === 'contents');
@@ -305,7 +293,7 @@ export class PagesSidebar {
     const onlyMarked = this.filtered();
     this.filterBar.classList.toggle('is-hidden', board || this.mode !== 'pages' || !this.m.isBookmarked);
     this.filterBtn.textContent = '';
-    el('span', 'hn-ps-filter-label', this.filterBtn, onlyMarked ? t('bookmarksOnly') : t('allPages'));
+    el('span', 'hn-ps-filter-label', this.filterBtn, this.filterLabel(onlyMarked ? 'bookmarks' : 'all'));
     setHnIcon(el('span', 'hn-ps-filter-chev', this.filterBtn), 'chevron-down');
     let shown = 0;
     this.titleEl.textContent = board ? t('board') : `${t('pages')} · ${n}`;
@@ -471,6 +459,11 @@ export class PagesSidebar {
     this.render();
   }
 
+  private filterLabel(filter: PageFilter): string {
+    const count = filter === 'all' ? this.m.count() : Array.from({ length: this.m.count() }, (_, i) => this.m.isBookmarked?.(i) ? 1 : 0).reduce<number>((a, b) => a + b, 0);
+    return `${t(filter === 'all' ? 'allPages' : 'bookmarksOnly')} · ${count}`;
+  }
+
   private openFilterMenu(): void {
     const wasOpen = this.menu?.dataset.kind === 'filter';
     this.closeMenu();
@@ -481,8 +474,8 @@ export class PagesSidebar {
     menu.addEventListener('pointerdown', (e) => e.stopPropagation());
     const cur = this.m.filter?.() ?? 'all';
     for (const [f, label] of [
-      ['all', t('allPages')],
-      ['bookmarks', t('bookmarksOnly')],
+      ['all', this.filterLabel('all')],
+      ['bookmarks', this.filterLabel('bookmarks')],
     ] as [PageFilter, string][]) {
       const b = el('button', 'hn-ps-menu-row' + (f === cur ? ' is-checked' : ''), menu);
       b.type = 'button';

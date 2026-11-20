@@ -1,6 +1,7 @@
 // Browser integration tests for the HandNote editor (Ink Lab page, real Chromium, synthetic
 // PointerEvents). Run with `npm run test:browser`. Screenshots go to test-output/.
 import { YONG, circle, loops, toSamples } from './handwriting.mjs';
+import { writeFile } from 'node:fs/promises';
 
 export const tests = [];
 const t = (name, fn) => tests.push({ name, fn });
@@ -73,6 +74,139 @@ async function pixel(page, x, y, pageIndex = 0) {
 }
 
 const lum = (px) => 0.299 * px[0] + 0.587 * px[1] + 0.114 * px[2];
+
+t('beta10 PDF export: 21 pages bypass a full visible-page cache', async ({ page, base, assert }) => {
+  await open(page, base, '?fresh');
+  const result = await page.evaluate(async () => {
+    const h = window.__hn, template = h.editor.getDocument().pages[0];
+    let live = 0, maxLive = 0, rendered = 0, released = 0;
+    h.setDocRenderer({ render: async (_src, n, w, height) => {
+      live++; maxLive = Math.max(live, maxLive); rendered++;
+      const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = height;
+      const ctx = canvas.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, height);
+      ctx.fillStyle = '#123'; ctx.font = '48px sans-serif'; ctx.fillText('Export page ' + n, 60, 120);
+      return { image: canvas, width: w, height, release: () => { live--; released++; canvas.width = canvas.height = 0; } };
+    } });
+    h.registerSources({ full: { id: 'full', kind: 'pdf', path: 'fixture.pdf', name: 'fixture.pdf', pages: 30, size: 419430400, sha256: '', imported: 1 } });
+    h.setDocCacheBudget(4_000_000);
+    const pages = Array.from({ length: 21 }, (_, i) => ({ ...template, id: 'export-' + i, width: 595, height: 842, doc: { src: 'full', n: i + 1 } }));
+    await h.ensureDocPage(pages[0], 2);
+    h.docPageImage('full', 1, 595, 842, 2); // on-screen rendering must be protected
+    const before = h.docCacheStats();
+    const bytes = await h.pagesToPdf(pages);
+    const after = h.docCacheStats();
+    return { bytes: Array.from(bytes), before, after, live, maxLive, rendered, released };
+  });
+  assert(result.after.pages === result.before.pages, 'export did not populate the screen cache');
+  assert(result.maxLive <= 2 && result.live === 1, 'only the on-screen page and one export page allocated');
+  assert(result.released === 21, 'all export backgrounds released');
+  await writeFile('test-output/beta10-21-pages.pdf', Buffer.from(result.bytes));
+});
+
+t('beta10 Pencil toolbar: mismatched finger release does not lose the Pencil tap', async ({ page, base, assert }) => {
+  await open(page, base, '?fresh');
+  const tool = await page.evaluate(() => {
+    const button = document.querySelector('.hn-tool[data-group="eraser"]');
+    const r = button.getBoundingClientRect();
+    const e = (type, id, kind) => new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: id, pointerType: kind, button: 0, clientX: r.x + 10, clientY: r.y + 10 });
+    button.dispatchEvent(e('pointerdown', 30, 'pen'));
+    button.dispatchEvent(e('pointerup', 31, 'touch'));
+    button.dispatchEvent(e('pointerup', 30, 'pen'));
+    return window.__hn.editor.getSettings().tool;
+  });
+  assert(tool === 'eraser', 'single Pencil tap survives unrelated touch release');
+  // Real capture: down inside a button, up 5px outside its edge, still within tap tolerance.
+  const r = await page.locator('.hn-tool[data-group="pen"]').boundingBox();
+  await page.mouse.move(r.x + r.width - 3, r.y + r.height / 2); await page.mouse.down();
+  await page.mouse.move(r.x + r.width + 5, r.y + r.height / 2); await page.mouse.up();
+  assert(await page.evaluate(() => window.__hn.editor.getSettings().tool) === 'fountain', 'captured release just outside selects once');
+});
+
+t('public MD Markdown: pen and eraser use the public input path', async ({ page, base, assert, shot }) => {
+  await page.goto(`${base}/experiments/ink-lab/md.html`);
+  await page.waitForFunction(() => window.__md);
+  await page.evaluate(async()=>{for(let i=0;i<5;i++)await new Promise(requestAnimationFrame);});
+  const select = async group => page.locator(`.hn-tool[data-group="${group}"]`).evaluate(el=>{
+    const r=el.getBoundingClientRect();for(const type of ['pointerdown','pointerup'])el.dispatchEvent(new PointerEvent(type,{bubbles:true,cancelable:true,pointerType:'pen',pointerId:98,button:0,buttons:type==='pointerup'?0:1,clientX:r.x+10,clientY:r.y+10}));
+  });
+  const draw = async () => page.evaluate(() => {
+    const sc = window.__md.view.scrollDOM, r = sc.getBoundingClientRect();
+    const send = (type, x, y, buttons) => sc.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, pointerType: 'pen', pointerId: 50, button: 0, buttons, pressure: 0.5, clientX: r.x + x, clientY: r.y + y }));
+    const top = sc.scrollTop;
+    send('pointerdown', 100, 100, 1); for (let x = 105; x <= 200; x += 5) send('pointermove', x, 100, 1); send('pointerup', 200, 100, 0);
+    return { strokes: window.__md.store.doc.pages[0].strokes.length, tool: window.__md.settings.tool, ink: JSON.stringify(window.__md.store.doc.pages[0].strokes), top, after: sc.scrollTop };
+  });
+  const ink = await draw();
+  assert(ink.strokes === 1 && ink.top === ink.after, 'first contact writes without scrolling');
+  await select('eraser');
+  const erased = await draw();
+  assert(erased.ink !== ink.ink && erased.top === erased.after, 'eraser removes ink at the input position without scrolling');
+  await select('pen');
+  assert((await draw()).strokes === erased.strokes + 1, 'switch back writes on first contact');
+  await shot('beta10-md-ink');
+});
+
+t('language and PDF: live switch preserves strokes and translates menus', async ({ page, base, assert, shot }) => {
+  await open(page, base, '?fresh&lang=zh');
+  for (const line of YONG) await stroke(page, toSamples(line, { x0: 90, y0: 180, scale: 2, speed: 240 }));
+  const before = await page.evaluate(() => window.__hn.serialize());
+  await page.locator('.hn-more-btn').click();
+  const rows = page.locator('.hn-list-row');
+  assert(await rows.filter({ hasText: '导出为 PNG' }).count() === 1, 'Chinese export row');
+  assert(await rows.filter({ hasText: '导出为 PDF' }).count() === 1, 'PDF export row');
+  assert(!(await rows.filter({ hasText: 'Save now' }).count()), 'save removed from everyday menu');
+  assert(await page.locator('.hn-diagnostics-fold').getAttribute('open') === null, 'diagnostics collapsed');
+  const icons = await rows.evaluateAll((rs) => rs.filter((r) => /PNG|SVG|导出为 PDF|导入文档/.test(r.textContent)).map((r) => r.querySelector('svg').innerHTML));
+  assert(new Set(icons).size === 4, 'four distinct import/export icons');
+  await shot('private-language-zh');
+  await page.evaluate(() => window.__hn.setLanguage('en'));
+  assert(await page.locator('.hn-more-btn').getAttribute('title') === 'More', 'toolbar switched immediately');
+  assert(await page.evaluate(() => window.__hn.serialize()) === before, 'language switch keeps document');
+  assert(await page.locator('.hn-undo').isEnabled(), 'undo still available');
+  await page.locator('.hn-more-btn').click();
+  assert(await rows.filter({ hasText: 'Export as PNG' }).count() === 1, 'existing menu model now English');
+  await shot('private-language-en');
+});
+
+t('language and PDF: real multi-page export, cancellation and missing background', async ({ page, base, assert }) => {
+  await open(page, base, '?fresh&lang=zh');
+  for (const line of YONG) await stroke(page, toSamples(line, { x0: 90, y0: 180, scale: 2, speed: 240 }));
+  const result = await page.evaluate(async () => {
+    const h = window.__hn;
+    const pages = h.editor.getDocument().pages;
+    pages[0].items.push({ id: 'export-title', type: 'text', x: 60, y: 40, w: 460, h: 50, created: 1,
+      text: 'HandNote PDF 导出测试 · 第一页', size: 22, color: '#111111', font: 'sans', bold: false, italic: false, align: 'left', autoWidth: false });
+    pages[1].width = 842; pages[1].height = 595;
+    pages[1].strokes = pages[0].strokes.map((s) => ({ ...s, id: s.id + '-annotation' }));
+    pages[1].doc = { src: 'pdf-test', n: 1 };
+    h.registerSources({ 'pdf-test': { id: 'pdf-test', kind: 'pdf', path: 'fixture.pdf', name: 'fixture.pdf', size: 1, sha256: '', pages: 1, imported: 1 } });
+    h.setDocRenderer({ render: async (_s, _n, w, height) => {
+      const c = document.createElement('canvas'); c.width = w; c.height = height;
+      const ctx = c.getContext('2d'); ctx.fillStyle = '#def0ff'; ctx.fillRect(0, 0, w, height);
+      ctx.fillStyle = '#154070'; ctx.font = `${32 * w / 842}px sans-serif`;
+      ctx.fillText('PDF background / 文档底稿 · 第二页', 45 * w / 842, 110 * height / 595);
+      return { image: c, width: w, height, release: () => { c.width = c.height = 0; } };
+    } });
+    const progress = [];
+    const bytes = await h.pagesToPdf(pages, { onProgress: (n) => progress.push(n) });
+    const ctl = new AbortController();
+    let cancelled = '', missing = '', budget = '';
+    try { await h.pagesToPdf(pages, { signal: ctl.signal, onProgress: () => ctl.abort() }); } catch (e) { cancelled = e.name; }
+    try { await h.pagesToPdf(pages, { maxBytes: 1 }); } catch (e) { budget = e.message; }
+    h.setDocRenderer(null);
+    try { await h.pagesToPdf([pages[1]]); } catch (e) { missing = e.message; }
+    // A separate whiteboard exercises negative origins and cropped content bounds.
+    const board = { ...pages[0], doc: undefined, board: { origin: [-200, -100], frames: [] } };
+    const boardBytes = await h.pagesToPdf([board]);
+    return { bytes: Array.from(bytes), board: Array.from(boardBytes), progress, cancelled, missing, budget };
+  });
+  assert(result.progress.join(',') === '1,2,3', 'all pages rendered in sequence');
+  assert(result.cancelled === 'AbortError', 'cancel stops export');
+  assert(result.missing.includes('无法读取'), 'missing source fails instead of exporting placeholder');
+  assert(result.budget.includes('内存预算'), 'compressed output budget enforced');
+  await writeFile('test-output/private-pdf-export.pdf', Buffer.from(result.bytes));
+  await writeFile('test-output/private-board-export.pdf', Buffer.from(result.board));
+});
 
 t('lab loads and reports capabilities', async ({ page, base, assert, log }) => {
   await open(page, base);
@@ -920,7 +1054,7 @@ t('v0.4 tool taps: a wobbly pen tap switches tools once; the trailing click does
   assert((await page.evaluate(() => window.__hn.editor.getSettings().tool)) === 'fountain', 'keyboard click selects the pen');
   // the top bar order: pages | lasso pen eraser text image shapes laser
   const order = await page.$$eval('.hn-tools > button', (bs) => bs.map((b) => b.dataset.group ?? (b.classList.contains('hn-pages-btn') ? 'pages' : '?')));
-  assert(JSON.stringify(order) === JSON.stringify(['pages', 'lasso', 'pen', 'eraser', 'text', 'image', 'shape', 'laser']), `order ${order}`);
+  assert(JSON.stringify(order) === JSON.stringify(['pages', 'lasso', 'pen', 'eraser', 'text', 'image', 'shape', 'laser', 'hand']), `order ${order}`);
 });
 
 t('v0.4 controls: colour circles stay round with a ring + check on the selected one; selected tools are marked', async ({ page, base, assert }) => {
@@ -2993,4 +3127,411 @@ t('0.9 keyboard paste (Ctrl+V): text and images from the paste event; HandNote c
   const n0 = await strokeCount(page);
   await firePaste({ text: '' });
   assert((await strokeCount(page)) === n0 + 1, 'empty system text after a HandNote copy → the copied ink is pasted');
+});
+
+
+t('public MD Markdown: More > Exit leaves annotation mode',async({page,base,assert})=>{
+  await page.goto(`${base}/experiments/ink-lab/md.html`);await page.waitForFunction(()=>window.__md);
+  const flags=await page.locator('.hn-tool[data-group="eraser"]').evaluate(el=>{
+    let captures=0;el.setPointerCapture=()=>captures++;
+    const r=el.getBoundingClientRect();
+    const down=new PointerEvent('pointerdown',{bubbles:true,cancelable:true,pointerType:'pen',pointerId:90,button:0,buttons:1,clientX:r.x+10,clientY:r.y+10});
+    el.dispatchEvent(down);el.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,cancelable:true,pointerType:'pen',pointerId:90,button:0,buttons:0,clientX:r.x+10,clientY:r.y+10}));
+    return {captures,prevented:down.defaultPrevented,touchAction:getComputedStyle(el).touchAction};
+  });
+  assert(flags.captures===0&&!flags.prevented&&flags.touchAction==='manipulation','Markdown controls retain public pointer and touch-action behavior: '+JSON.stringify(flags));
+  assert(await page.evaluate(()=>window.__md.settings.tool)==='eraser','one normal Pencil tap selects eraser');
+  await page.locator('.hn-inkbar .hn-more-btn').click();
+  await page.locator('.hn-ink-menu .hn-ps-menu-row').filter({hasText:/退出 HandNote 批注|Exit HandNote annotation/}).click();
+  await page.waitForFunction(()=>window.__md.layer.closed);
+  assert(await page.locator('.hn-ink-shield').count()===0,'exit removes the annotation layer');
+  assert(await page.evaluate(()=>window.__md.view.contentDOM.isContentEditable),'normal Markdown is editable again');
+  assert(await page.evaluate(()=>window.__md.store.disposed),'closing disposes annotation storage');
+});
+
+t('beta11 exports: format expands current/all; PNG and SVG whole notes save as ZIP; PDF saves locally',async({page,base,assert,shot})=>{
+  await open(page,base,'?fresh&lang=zh');await page.locator('.hn-more-btn').click();
+  const row=page.locator('.hn-list-row').filter({hasText:'导出为 PNG'});
+  assert(await page.locator('.hn-export-range:visible').count()===0,'ranges start collapsed');
+  await row.click();assert(await page.locator('.hn-export-range:visible').count()===1,'only selected format expands');assert(await row.getAttribute('aria-expanded')==='true','range expands after format');
+  const choices=page.locator('.hn-export-choices').filter({has:row});assert(await choices.getByText('当前页',{exact:true}).isVisible(),'current-page choice');assert(await choices.getByText('整本笔记',{exact:true}).isVisible(),'whole-note choice');
+  await shot('beta11-export-menu');
+  await page.evaluate(()=>{window.__saved=[];window.showSaveFilePicker=async()=>({createWritable:async()=>({write:async file=>window.__saved.push({name:file.name,type:file.type,bytes:Array.from(new Uint8Array(await file.arrayBuffer()))}),close:async()=>{},abort:async()=>{}})});});
+  await page.evaluate(()=>{
+    const h=window.__hn;h.editor.getDocument().pages[1].doc={src:'beta11-export-source',n:1};
+    h.registerSources({'beta11-export-source':{id:'beta11-export-source',kind:'pdf',path:'test.pdf',name:'test.pdf',size:1,sha256:'',pages:1,imported:1}});
+    h.setDocRenderer({render:async(_s,_n,w,height)=>{const c=document.createElement('canvas');c.width=w;c.height=height;const ctx=c.getContext('2d');ctx.fillStyle='#d0e8ff';ctx.fillRect(0,0,w,height);ctx.fillStyle='#123';ctx.font='40px sans-serif';ctx.fillText('Imported document background',60,100);return {image:c,width:w,height,release:()=>{c.width=c.height=0;}};}});
+  });
+  for(const format of ['png','svg','pdf']){
+    await page.evaluate(f=>window.__hn.openDocumentExport(f,true),format);
+    await page.getByRole('button',{name:'保存到本机…',exact:true}).waitFor({timeout:30000});
+    await page.getByRole('button',{name:'保存到本机…',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('.test-modal'));
+  }
+  const saved=await page.evaluate(()=>window.__saved);assert(saved.length===3,'all three formats reached a local save handle');
+  assert(saved[0].name.endsWith('.zip')&&saved[1].name.endsWith('.zip'),'whole images packaged per page');assert(saved[2].name.endsWith('.pdf'),'whole PDF stays one PDF');
+  for(let i=0;i<saved.length;i++)await writeFile(`test-output/beta11-export-${i}.${i===2?'pdf':'zip'}`,Buffer.from(saved[i].bytes));
+  // Single image remains an image rather than a one-entry archive.
+  await page.evaluate(()=>window.__hn.openDocumentExport('png',false));await page.getByRole('button',{name:'保存到本机…',exact:true}).click();
+  await page.waitForFunction(()=>window.__saved.length===4);
+  assert(await page.evaluate(()=>window.__saved[3].name.endsWith('.png')),'current PNG saves as a single PNG');
+});
+
+t('beta11 pages: only all-pages/bookmarks filter with live counts',async({page,base,assert,shot})=>{
+  await open(page,base,'?fresh&lang=zh');await page.locator('.hn-pages-btn').click();
+  assert(await page.locator('.hn-ps-tab').count()===0,'Pages / Contents tabs removed');
+  assert((await page.locator('.hn-ps-filter-label').textContent()).includes('2'),'all pages count');
+  await page.locator('.hn-ps-filter-btn').click();
+  assert((await page.locator('.hn-ps-filter-menu').textContent()).includes('书签 · 0'),'bookmark count including zero');await shot('beta11-page-filter');
+});
+
+
+t('beta14 Markdown: beta.8 line anchoring survives edits, reopen and 747% zoom', async({page,base,assert,shot})=>{
+  await page.goto(`${base}/experiments/ink-lab/md.html`);await page.waitForFunction(()=>window.__md);
+  const result=await page.evaluate(async()=>{
+    const {layer,view,store}=window.__md, wait=async()=>{for(let i=0;i<5;i++)await new Promise(requestAnimationFrame);};
+    const line=view.state.doc.line(5), r=view.coordsAtPos(line.from), sc=view.scrollDOM;
+    const send=(type,x)=>sc.dispatchEvent(new PointerEvent(type,{bubbles:true,cancelable:true,pointerType:'pen',pointerId:72,button:0,buttons:type==='pointerup'?0:1,pressure:0.6,clientX:r.left+x,clientY:(r.top+r.bottom)/2}));
+    send('pointerdown',25);for(let x=30;x<=85;x+=5)send('pointermove',x);send('pointerup',85);await wait();
+    const id=store.doc.pages[0].strokes[0].id;
+    const relative=()=>{const st=layer.strokes.find(s=>s.id===id),pos=layer.pos.get(id);return {line:view.state.doc.lineAt(pos).number,y:st.samples[0].y+layer.shift(st)-view.lineBlockAt(pos).top/layer.hUnit()};};
+    const before=relative();view.dispatch({changes:{from:0,insert:'New paragraph\nNew line\n'}});await wait();const inserted=relative();
+    view.dispatch({changes:{from:0,to:'New paragraph\nNew line\n'.length}});await wait();const deleted=relative();
+    layer.refreshAnchors(store.doc);const copy=structuredClone(store.doc);store.doc=copy;layer.setDocument(copy,false);await wait();const reopened=relative();
+    const pos=layer.pos.get(id),target=view.coordsAtPos(pos);view.dom.addClass('hn-ink-pinching');
+    layer.zoomTo(7.47,target.left+50,(target.top+target.bottom)/2);await wait();
+    const canvas=layer.inkCanvas, rect=canvas.getBoundingClientRect();
+    return {before,inserted,deleted,reopened,ratio:canvas.width/rect.width,dpr:devicePixelRatio,zoom:layer.zoom,pinching:view.dom.hasClass('hn-ink-pinching'),sizer:view.contentDOM.closest('.cm-sizer').style.transform};
+  });
+  assert(result.inserted.line===result.before.line+2,'annotation follows its original line, not the old line number');
+  assert([result.inserted,result.deleted,result.reopened].every(r=>Math.abs(r.y-result.before.y)<0.6),'same relative position after insert, delete and reopen');
+  assert(result.ratio>=result.dpr*0.98,'747% ink is redrawn at screen pixel density');
+  assert(result.zoom===7.47,'public zoom reaches the requested scale');
+  await shot('beta14-md-747');
+});
+
+t('beta16 Markdown: restored coordinates keep live and saved ink at the pen',async({page,base,assert})=>{
+  await page.goto(`${base}/experiments/ink-lab/md.html`);await page.waitForFunction(()=>window.__md);
+  const result=await page.evaluate(async()=>{
+    const {layer,view,settings}=window.__md,sc=view.scrollDOM;
+    const wait=async()=>{for(let i=0;i<5;i++)await new Promise(requestAnimationFrame);};
+    settings.pens.fountain.color='#ff0000';settings.pens.fountain.params.width=1;
+    const out=[];
+    for(const zoom of [1,2,6.14,0.75,7.47,1]){
+      const r=sc.getBoundingClientRect();layer.zoomTo(zoom,r.left+180,r.top+160);await wait();
+      const rect=sc.getBoundingClientRect(),x=rect.left+220,y=rect.top+280;
+      const send=(type,dx)=>sc.dispatchEvent(new PointerEvent(type,{bubbles:true,cancelable:true,pointerType:'pen',pointerId:92,button:0,buttons:type==='pointerup'?0:1,pressure:0.7,clientX:x+dx,clientY:y}));
+      const sample=canvas=>{const r=canvas.getBoundingClientRect();return canvas.getContext('2d').getImageData(Math.round((x+50-r.left)*canvas.width/r.width),Math.round((y-r.top)*canvas.height/r.height),1,1).data[3];};
+      send('pointerdown',0);for(let dx=5;dx<=100;dx+=5)send('pointermove',dx);layer.renderLive();
+      const live=sample(layer.liveCanvas);send('pointerup',100);await wait();
+      out.push({zoom,live,saved:sample(layer.inkCanvas),cssZoom:view.dom.style.zoom});
+    }
+    return out;
+  });
+  for(const r of result){
+    assert(r.live>100&&r.saved>100,`${r.zoom}: live and committed ink both cover the physical pen position`);
+    assert(!r.cssZoom,'CSS layout zoom is absent from the restored coordinate system');
+  }
+});
+
+t('beta16 Markdown: repeated two-finger pinches retain the page position on release',async({page,base,assert})=>{
+  await page.goto(`${base}/experiments/ink-lab/md.html`);await page.waitForFunction(()=>window.__md);
+  const result=await page.evaluate(async()=>{
+    const {layer,view}=window.__md,sc=view.scrollDOM;
+    const wait=async()=>{for(let i=0;i<5;i++)await new Promise(requestAnimationFrame);};
+    const out=[];
+    for(const factor of [1.5,1.4,0.8,1.3]){
+      const r=sc.getBoundingClientRect(),x=r.left+300,y=r.top+300;
+      const pos=layer.withoutShield(()=>view.posAtCoords({x,y}));
+      const at=()=>{const line=layer.lineEl(pos),r=line.getBoundingClientRect();return {x:r.left,y:r.top};};
+      const send=(type,id,x,y)=>sc.dispatchEvent(new PointerEvent(type,{bubbles:true,cancelable:true,pointerType:'touch',pointerId:id,buttons:type==='pointerup'?0:1,clientX:x,clientY:y}));
+      const before=layer.zoom;
+      send('pointerdown',93,x-90,y);send('pointerdown',94,x+90,y);
+      for(let i=1;i<=8;i++){const d=90*(1+(factor-1)*i/8);send('pointermove',93,x-d,y);send('pointermove',94,x+d,y);await new Promise(requestAnimationFrame);}
+      const preview=at();send('pointerup',93,x-90*factor,y);send('pointerup',94,x+90*factor,y);await wait();
+      const committed=at();out.push({before,zoom:layer.zoom,factor,dx:committed.x-preview.x,dy:committed.y-preview.y});
+    }
+    return out;
+  });
+  for(const r of result){
+    assert(Math.abs(r.zoom-r.before*r.factor)<0.02,'two-finger gesture produces the intended scale');
+    assert(Math.abs(r.dx)<3&&Math.abs(r.dy)<3,'release keeps the previewed text position: '+JSON.stringify(r));
+  }
+});
+
+t('Markdown sharp zoom (iPadOS): no composited layer in the scaled box; scrolling, pen and pinch stay aligned',async({page,base,assert,shot})=>{
+  await page.goto(`${base}/experiments/ink-lab/md.html`);await page.waitForFunction(()=>window.__md);
+  const r=await page.evaluate(async()=>{
+    const {layer,view,settings}=window.__md,sc=view.scrollDOM;
+    const wait=async()=>{for(let i=0;i<5;i++)await new Promise(requestAnimationFrame);};
+    const near=(canvas,x,y)=>{const r=canvas.getBoundingClientRect(),cx=Math.round((x-r.left)*canvas.width/r.width),cy=Math.round((y-r.top)*canvas.height/r.height);const d=canvas.getContext('2d').getImageData(cx-1,cy-1,3,3).data;let a=0;for(let i=3;i<d.length;i+=4)a=Math.max(a,d[i]);return a;};
+    const state=()=>({host:layer.inkCanvas.parentElement.className,liveHost:layer.liveCanvas.parentElement.className,sharp:view.dom.classList.contains('hn-ink-sharp'),overflow:getComputedStyle(sc).overflowY,caret:getComputedStyle(view.dom.querySelector('.cm-cursorLayer')??view.dom).animationName,sizer:view.contentDOM.closest('.cm-sizer').style.transform,density:layer.inkCanvas.width/layer.inkCanvas.getBoundingClientRect().width,dpr:devicePixelRatio});
+    settings.pens.fountain.color='#ff0000';settings.pens.fountain.params.width=3;
+    const cl=view.dom.querySelector('.cm-cursorLayer')??view.dom.appendChild(Object.assign(document.createElement('div'),{className:'cm-cursorLayer'}));cl.style.animation='cm-blink 1.2s steps(1) infinite';
+    await wait();
+    const at1=state();
+    // a stroke at 100 %, remembered relative to its line (in line heights)
+    const line=view.state.doc.line(8),pos=line.from,lr0=layer.lineEl(pos).getBoundingClientRect();
+    const px=lr0.left+120,py=lr0.top+lr0.height/2;
+    const pen=(type,x,y,id)=>sc.dispatchEvent(new PointerEvent(type,{bubbles:true,cancelable:true,pointerType:'pen',pointerId:id,button:0,buttons:type==='pointerup'?0:1,pressure:0.7,clientX:x,clientY:y}));
+    pen('pointerdown',px-60,py,111);for(let dx=-55;dx<=60;dx+=5)pen('pointermove',px+dx,py,111);pen('pointerup',px+60,py,111);await wait();
+    const rel={x:(px-lr0.left)/lr0.height,y:(py-lr0.top)/lr0.height};
+    const onStroke=()=>{const lr=layer.lineEl(pos).getBoundingClientRect();return {x:lr.left+rel.x*lr.height,y:lr.top+rel.y*lr.height};};
+    const strokeInk=()=>{const p=onStroke();return near(layer.inkCanvas,p.x,p.y);};
+    const ink1=strokeInk();
+    const s0=sc.getBoundingClientRect();layer.zoomTo(2.5,s0.left+150,s0.top+100);await wait();
+    const at25=state(),hr=layer.inkCanvas.parentElement.getBoundingClientRect(),sr=sc.getBoundingClientRect();
+    const hostFits=Math.abs(hr.left-sr.left)<2&&Math.abs(hr.top-sr.top)<2&&Math.abs(hr.right-sr.right)<20&&Math.abs(hr.bottom-sr.bottom)<20;
+    const ink25=strokeInk();
+    // wheel scrolls (no native scrolling while zoomed)
+    let st=sc.scrollTop;sc.dispatchEvent(new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:200,clientX:sr.left+200,clientY:sr.top+200}));await wait();
+    const wheel=sc.scrollTop-st,inkWheel=strokeInk();
+    // one finger with the shield up (pen tool): the router pans
+    const grace=()=>new Promise(r=>setTimeout(r,700));await grace();
+    st=sc.scrollTop;const fx=sr.left+300,fy=sr.top+400;
+    const finger=(type,x,y)=>sc.dispatchEvent(new PointerEvent(type,{bubbles:true,cancelable:true,pointerType:'touch',pointerId:112,isPrimary:true,button:0,buttons:type==='pointerup'?0:1,clientX:x,clientY:y}));
+    finger('pointerdown',fx,fy);for(let i=1;i<=10;i++){finger('pointermove',fx,fy+i*15);await new Promise(requestAnimationFrame);}finger('pointerup',fx,fy+150);await wait();
+    const routerPan=sc.scrollTop-st,inkRouter=strokeInk();
+    // one finger without the shield (typing in the Markdown): HandNote's one-finger pan
+    layer.typing=true;layer.applyLock();await wait();const shieldDown=!layer.clip.classList.contains('hn-ink-shield');
+    const touch=(type,x,y)=>{const tc={identifier:113,clientX:x,clientY:y,touchType:'direct'};const e=new Event(type,{bubbles:true,cancelable:true});Object.defineProperties(e,{touches:{value:type==='touchend'?[]:[tc]},changedTouches:{value:[tc]},timeStamp:{value:performance.now()}});sc.dispatchEvent(e);return e.defaultPrevented;};
+    st=sc.scrollTop;touch('touchstart',fx,fy);let prevented=false;for(let i=1;i<=8;i++){prevented=touch('touchmove',fx,fy-i*20)||prevented;await new Promise(requestAnimationFrame);}
+    const fingerMoved=sc.scrollTop-st;touch('touchend',fx,fy-160);await wait();
+    const inkFinger=strokeInk();
+    layer.typing=false;layer.applyLock();await wait();
+    // a new stroke after the pans lands under the pen (live and committed)
+    const q=sc.getBoundingClientRect(),qx=q.left+260,qy=q.top+300;
+    pen('pointerdown',qx,qy,114);for(let dx=5;dx<=100;dx+=5)pen('pointermove',qx+dx,qy,114);layer.renderLive();
+    const live=near(layer.liveCanvas,qx+50,qy);pen('pointerup',qx+100,qy,114);await wait();const saved=near(layer.inkCanvas,qx+50,qy);
+    // pinch preview: the ink is carried with the text, and stays there on release
+    await grace();
+    const c=layer.lineEl(pos).getBoundingClientRect(),mx=c.left+100,my=c.top;
+    const tp=(type,id,x,y)=>sc.dispatchEvent(new PointerEvent(type,{bubbles:true,cancelable:true,pointerType:'touch',pointerId:id,buttons:type==='pointerup'?0:1,clientX:x,clientY:y}));
+    tp('pointerdown',115,mx-80,my);tp('pointerdown',116,mx+80,my);
+    for(let i=1;i<=8;i++){const d=80*(1+0.4*i/8);tp('pointermove',115,mx-d,my);tp('pointermove',116,mx+d,my);await new Promise(requestAnimationFrame);}
+    const lineAt=()=>{const r=layer.lineEl(pos).getBoundingClientRect();return {x:r.left,y:r.top};};
+    const inkPreview=strokeInk(),previewPos=lineAt();
+    tp('pointerup',115,mx-112,my);tp('pointerup',116,mx+112,my);await wait();
+    const inkPinched=strokeInk(),pinchedPos=lineAt(),zoomPinched=layer.zoom;
+    layer.zoomTo(1,q.left+150,q.top+100);await wait();
+    const back=state(),inkBack=strokeInk(),hostHidden=getComputedStyle(layer.inkHost).display;
+    return {shieldDown,at1,at25,hostFits,ink1,ink25,wheel,inkWheel,routerPan,inkRouter,fingerMoved,prevented,inkFinger,live,saved,inkPreview,inkPinched,previewPos,pinchedPos,zoomPinched,back,inkBack,hostHidden};
+  });
+  console.log(JSON.stringify(r));
+  assert(/hn-ink-clip/.test(r.at1.host)&&!r.at1.sharp&&r.at1.overflow==='auto','100 %: native structure (canvases in the scroller, native scrolling)');
+  assert(/hn-ink-overhost/.test(r.at25.host)&&/hn-ink-overhost/.test(r.at25.liveHost),'zoomed: ink canvases are outside the scaled box');
+  assert(r.at25.sharp&&r.at25.overflow==='hidden','zoomed: no native scroll layer in the scaled box');
+  assert(r.at1.caret!=='none'&&r.at25.caret==='none',`zoomed: the caret does not animate (${r.at1.caret} -> ${r.at25.caret})`);
+  assert(!/3d/.test(r.at25.sizer),'zoomed: the note is not moved with a 3D transform');
+  assert(r.hostFits,'zoomed: the ink host covers the visible note');
+  assert(r.at25.density>=r.at25.dpr*0.98,`zoomed: ink drawn at screen pixel density (${r.at25.density})`);
+  assert([r.ink1,r.ink25,r.inkWheel,r.inkRouter,r.inkFinger].every(a=>a>100),'existing ink stays on its text at 100 %, 250 % and after every pan: '+JSON.stringify([r.ink1,r.ink25,r.inkWheel,r.inkRouter,r.inkFinger]));
+  assert(Math.abs(r.wheel-200/2.5)<2,`wheel scrolls the zoomed note (${r.wheel})`);
+  assert(r.routerPan<-50,`one finger with the pen tool pans (${r.routerPan})`);
+  assert(r.shieldDown&&r.prevented&&Math.abs(r.fingerMoved-160/2.5)<2,`one finger with the text tool pans (${r.fingerMoved})`);
+  assert(r.live>100&&r.saved>100,'after panning, live and committed ink are under the pen');
+  assert(r.inkPreview>100&&r.inkPinched>100,'pinch: ink follows the text during the preview and after release: '+JSON.stringify([r.inkPreview,r.inkPinched]));
+  assert(Math.abs(r.previewPos.x-r.pinchedPos.x)<3&&Math.abs(r.previewPos.y-r.pinchedPos.y)<3,'pinch: release keeps the previewed text position: '+JSON.stringify([r.previewPos,r.pinchedPos]));
+  assert(Math.abs(r.zoomPinched-2.5*1.4)<0.05,`pinch zoomed (${r.zoomPinched})`);
+  assert(/hn-ink-clip/.test(r.back.host)&&!r.back.sharp&&r.back.overflow==='auto'&&r.hostHidden==='none','back at 100 %: native structure restored');
+  assert(r.inkBack>100,'back at 100 %: ink on its text');
+  await shot('md-sharp-zoom');
+});
+t('Markdown embed preview: vector page (ink, text, formula, cropped image) stays sharp when zoomed; documents under it',async({page,base,assert,shot})=>{
+  await page.goto(`${base}/experiments/ink-lab/md.html`);await page.waitForFunction(()=>window.__md);
+  const info=await page.evaluate(async()=>{
+    const {view,store,settings,embed}=window.__md,sc=view.scrollDOM;
+    const wait=async()=>{for(let i=0;i<5;i++)await new Promise(requestAnimationFrame);};
+    settings.pens.fountain.color='#ff0000';settings.pens.fountain.params.width=3;
+    const r=sc.getBoundingClientRect();
+    for(let i=0;i<=20;i++)sc.dispatchEvent(new PointerEvent(i===0?'pointerdown':i===20?'pointerup':'pointermove',{bubbles:true,cancelable:true,pointerType:'pen',pointerId:121,button:0,buttons:i===20?0:1,pressure:0.7,clientX:r.left+100+i*10,clientY:r.top+150}));
+    await wait();
+    // a real stroke of the ink layer, moved to (50…250, 100) of a 600×400 page
+    const src=store.doc.pages[0].strokes[0],x0=src.samples[0].x,y0=src.samples[0].y;
+    const stroke={...structuredClone(src),id:'embed-stroke',samples:src.samples.map(s=>({...s,x:s.x-x0+50,y:s.y-y0+100}))};
+    delete stroke.anchor;delete stroke.geom;
+    const png=document.createElement('canvas');png.width=20;png.height=20;const g=png.getContext('2d');g.fillStyle='#00ff00';g.fillRect(0,0,10,20);g.fillStyle='#0000ff';g.fillRect(10,0,10,20);
+    embed.registerAssets({embedimg:{mime:'image/png',data:png.toDataURL('image/png').split(',')[1]}});
+    window.__embedPage=(extra={})=>({...embed.createDocument({width:600,height:400,background:embed.defaultBackground('blank')}).pages[0],strokes:[stroke],items:[
+      {id:'i1',type:'image',x:400,y:50,w:100,h:100,created:1,src:'asset:embedimg',natW:20,natH:20,crop:[0.5,0,0.5,1]},
+      {id:'t1',type:'text',x:50,y:200,w:300,h:40,created:1,text:'Embed vector text',size:24,color:'#000000',font:'sans',bold:false,italic:false,align:'left',autoWidth:true},
+      {id:'f1',type:'formula',x:350,y:200,w:200,h:60,created:1,latex:'x^2+y^2',color:'#000000',size:24}],...extra});
+    const host=document.createElement('div');host.id='embed-test';host.style.cssText='position:fixed;left:0;top:0;width:600px;z-index:50;background:#fff;transform-origin:0 0';document.body.append(host);
+    const holder=embed.renderEmbedPage(host,window.__embedPage(),new embed.GeometryCache(),600,2);
+    await wait();await new Promise(r=>setTimeout(r,300));
+    return {svg:holder.querySelectorAll(':scope > svg.hn-embed-svg').length,canvases:holder.querySelectorAll('canvas').length,text:holder.textContent,rect:holder.getBoundingClientRect().toJSON()};
+  });
+  assert(info.svg===1&&info.canvases===0,'a page without a document is one inline SVG, no bitmap');
+  assert(/Embed vector text/.test(info.text)&&/x\^2|x/.test(info.text),'text and formula are SVG text');
+  assert(Math.abs(info.rect.width-600)<1&&Math.abs(info.rect.height-400)<1,`page keeps its aspect ratio (${info.rect.width}x${info.rect.height})`);
+  const analyse=(buf,fn)=>page.evaluate(async([b64,src])=>{
+    const img=new Image();img.src='data:image/png;base64,'+b64;await img.decode();
+    const c=document.createElement('canvas');c.width=img.width;c.height=img.height;const g=c.getContext('2d');g.drawImage(img,0,0);
+    const px=(x,y)=>Array.from(g.getImageData(Math.round(x),Math.round(y),1,1).data);
+    return new Function('px','w','h',src)(px,c.width,c.height);
+  },[buf.toString('base64'),fn]);
+  const k=await page.evaluate(()=>devicePixelRatio);
+  const colours=await analyse(await page.locator('#embed-test').screenshot(),`const k=${k};const red=px(150*k,100*k),blue=px(450*k,100*k);let green=0;for(let y=55;y<150;y+=5)for(let x=405;x<500;x+=5){const p=px(x*k,y*k);if(p[1]>200&&p[0]<80&&p[2]<80)green++;}let dark=0;for(let y=205;y<240;y+=2)for(let x=52;x<300;x+=2){const p=px(x*k,y*k);if(p[0]<100&&p[1]<100&&p[2]<100)dark++;}return {red,blue,green,dark};`);
+  assert(colours.red[0]>200&&colours.red[1]<80,'ink at its page position: '+colours.red);
+  assert(colours.blue[2]>200&&colours.blue[0]<80&&colours.blue[1]<80&&colours.green===0,'cropped image shows only its visible part: '+JSON.stringify(colours));
+  assert(colours.dark>20,'text drawn');
+  await shot('embed-svg-1x');
+  // zoomed 4× (as the Markdown around it): the vector page is drawn again at that scale, the old bitmap preview is magnified
+  const soft=async(kind)=>{
+    await page.evaluate(kind=>{
+      const {embed}=window.__md,h=document.querySelector('#embed-test');h.replaceChildren();h.style.transform='scale(4)';
+      if(kind==='svg')embed.renderEmbedPage(h,window.__embedPage(),new embed.GeometryCache(),600,2);
+      else{const c=document.createElement('canvas');c.style.cssText='display:block;width:600px;height:400px';h.append(c);embed.renderPageToCanvas(c,window.__embedPage(),new embed.GeometryCache(),2);}
+    },kind);
+    await page.waitForTimeout(300);
+    const buf=await page.screenshot({clip:{x:120*4,y:80*4,width:300,height:160}});
+    await writeFile(`test-output/embed-zoom4-${kind}.png`,buf);
+    // partly red pixels down each column across the stroke: the width of its anti-aliased edges
+    return analyse(buf,`let n=0,cols=0;for(let x=5;x<w;x+=15){let red=0;for(let y=0;y<h;y++){const p=px(x,y);if(p[0]>200&&p[1]<215){red++;if(p[1]>40)n++;}}if(red)cols++;}return {edge:n/Math.max(1,cols),cols};`);
+  };
+  const vector=await soft('svg'),bitmap=await soft('bitmap');
+  console.log(JSON.stringify({vector,bitmap}));
+  assert(vector.cols>5&&bitmap.cols>5,'stroke in the zoomed clip');
+  assert(vector.edge<=4&&vector.edge*2<bitmap.edge,`zoomed 4×: crisp vector edges (${vector.edge.toFixed(1)} px) vs magnified bitmap (${bitmap.edge.toFixed(1)} px)`);
+  // an imported document page: bitmap backdrop under the vector ink
+  const doc=await page.evaluate(async()=>{
+    const {embed}=window.__md,h=document.querySelector('#embed-test');h.replaceChildren();h.style.transform='';
+    embed.registerSources({'embed-doc':{id:'embed-doc',kind:'pdf',path:'d.pdf',name:'d.pdf',size:1,sha256:'',pages:1,imported:1}});
+    embed.setDocRenderer({render:async(_s,_n,w,height)=>{const c=document.createElement('canvas');c.width=w;c.height=height;const g=c.getContext('2d');g.fillStyle='#ffd400';g.fillRect(0,0,w,height);return {image:c,width:w,height,release:()=>{c.width=c.height=0;}};}});
+    const holder=embed.renderEmbedPage(h,window.__embedPage({doc:{src:'embed-doc',n:1}}),new embed.GeometryCache(),600,2);
+    for(let i=0;i<40&&!holder.querySelector('canvas.hn-embed-backdrop')?.getContext('2d').getImageData(10,10,1,1).data[2]===0;i++)await new Promise(r=>setTimeout(r,50));
+    await new Promise(r=>setTimeout(r,200));
+    const kids=Array.from(holder.children).map(e=>e.className.baseVal??e.className);
+    const svgPaper=holder.querySelector('svg > rect');
+    return {kids,svgPaper:!!svgPaper};
+  });
+  const docPx=await analyse(await page.locator('#embed-test').screenshot(),`const k=${k};return {paper:px(300*k,350*k),red:px(150*k,100*k)};`);
+  console.log(JSON.stringify({doc,docPx}));
+  assert(doc.kids[0]==='hn-embed-backdrop'&&doc.kids[1]==='hn-embed-svg'&&!doc.svgPaper,'document page: bitmap backdrop, vector page without paper over it');
+  assert(docPx.paper[0]>200&&docPx.paper[1]>180&&docPx.paper[2]<80,'the document shows through: '+docPx.paper);
+  assert(docPx.red[0]>200&&docPx.red[1]<80,'ink over the document: '+docPx.red);
+  await shot('embed-svg-document');
+  await page.evaluate(()=>window.__md.embed.setDocRenderer(null));
+});
+t('Markdown More menu opens under its button (also inside a transformed ancestor); no Done button',async({page,base,assert})=>{
+  await page.goto(`${base}/experiments/ink-lab/md.html`);await page.waitForFunction(()=>window.__md);
+  assert(await page.locator('.hn-done-btn').count()===0,'no Done button in the Markdown toolbar');
+  const at=async()=>page.evaluate(async()=>{
+    const b=document.querySelector('.hn-inkbar .hn-more-btn');b.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,pointerType:'mouse',pointerId:1,button:0,buttons:1}));b.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,cancelable:true,pointerType:'mouse',pointerId:1,button:0,buttons:0}));b.click();
+    for(let i=0;i<3;i++)await new Promise(requestAnimationFrame);
+    const m=document.querySelector('.hn-ink-menu');if(!m)return null;
+    const br=b.getBoundingClientRect(),mr=m.getBoundingClientRect();
+    const out={dy:mr.top-br.bottom,dRight:mr.right-br.right,inWindow:mr.left>=0&&mr.right<=innerWidth};
+    document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}));await new Promise(requestAnimationFrame);
+    return out;
+  });
+  const plain=await at();
+  // Obsidian mobile: an ancestor with a transform (fixed positions become relative to it), moved down and right
+  await page.evaluate(()=>{const md=document.querySelector('#md');md.style.transform='translate(0px,0px)';md.style.marginTop='150px';md.style.marginLeft='40px';md.style.width='calc(100% - 80px)';});
+  const shifted=await at();
+  console.log(JSON.stringify({plain,shifted}));
+  for(const [name,r] of [['plain',plain],['transformed ancestor',shifted]]){
+    assert(r&&Math.abs(r.dy-6)<1.5,`${name}: menu starts right under the button (${r&&r.dy})`);
+    assert(r&&Math.abs(r.dRight)<1.5&&r.inWindow,`${name}: right-aligned with the button, inside the window (${r&&r.dRight})`);
+  }
+});
+t('MD export short note: native typography and no scroll-past-end page',async({page,base,assert})=>{
+  await page.goto(`${base}/experiments/ink-lab/md.html`);await page.waitForFunction(()=>window.__md);
+  await page.evaluate(async()=>{
+    const {view}=window.__md;
+    view.dispatch({changes:{from:0,to:view.state.doc.length,insert:'正常文字没有间隔 ABC ffi 012345'}});
+    view.contentDOM.style.fontFamily='Arial, sans-serif';view.contentDOM.style.letterSpacing='0px';
+    view.contentDOM.style.paddingBottom='900px';
+    for(let i=0;i<5;i++)await new Promise(requestAnimationFrame);
+  });
+  await page.locator('.cm-scroller').screenshot({path:'test-output/md-typography-source.png'});
+  for(const format of ['png','svg','pdf']){
+    const result=await page.evaluate(async format=>{
+      const {layer,exportMarkdown}=window.__md;const file=await exportMarkdown(layer,format,new AbortController().signal,()=>{});
+      let typography=null;
+      if(format==='png'){
+        const bitmap=await createImageBitmap(file),c=document.createElement('canvas');c.width=bitmap.width;c.height=bitmap.height;c.getContext('2d').drawImage(bitmap,0,0);bitmap.close();
+        const data=c.getContext('2d').getImageData(0,0,c.width,c.height).data;let left=c.width,right=-1;
+        for(let y=0;y<c.height;y++)for(let x=0;x<c.width;x++){const i=(y*c.width+x)*4;if(data[i]<100&&data[i+1]<100&&data[i+2]<100){left=Math.min(left,x);right=Math.max(right,x);}}
+        const range=document.createRange();range.selectNodeContents(window.__md.view.contentDOM.querySelector('.cm-line'));
+        typography={width:(right-left+1)/3.125,expected:range.getBoundingClientRect().width};
+      }
+      return {name:file.name,bytes:Array.from(new Uint8Array(await file.arrayBuffer())),typography};
+    },format);
+    assert(result.name.endsWith('.'+format),'short note exports one page, no empty tail');
+    if(result.typography)assert(Math.abs(result.typography.width-result.typography.expected)<5,'native exported text retains original line width: '+JSON.stringify(result.typography));
+    await writeFile(`test-output/md-typography.${format}`,Buffer.from(result.bytes));
+  }
+});
+
+t('MD composite export: all formats include Markdown and ink; camera restores on success and cancel',async({page,base,assert})=>{
+  await page.goto(`${base}/experiments/ink-lab/md.html`);await page.waitForFunction(()=>window.__md);
+  await page.evaluate(async()=>{
+    const {layer,view,settings}=window.__md;for(let i=0;i<5;i++)await new Promise(requestAnimationFrame);
+    settings.pens.fountain.color='#ff0000';
+    const sc=view.scrollDOM,r=sc.getBoundingClientRect();
+    for(let i=0;i<=20;i++)sc.dispatchEvent(new PointerEvent(i===0?'pointerdown':i===20?'pointerup':'pointermove',{bubbles:true,cancelable:true,pointerType:'pen',pointerId:101,button:0,buttons:i===20?0:1,pressure:0.7,clientX:r.left+100+i*5,clientY:r.top+180}));
+    layer.zoomTo(1.6,r.left+300,r.top+250);
+    for(let i=0;i<5;i++)await new Promise(requestAnimationFrame);
+  });
+  for(const format of ['png','svg','pdf']){
+    const result=await page.evaluate(async format=>{
+      const {layer,view,store,exportMarkdown}=window.__md,cam=layer.camNow(),source=view.state.doc.toString(),doc=JSON.stringify(store.doc);
+      const file=await exportMarkdown(layer,format,new AbortController().signal,()=>{});
+      return {name:file.name,bytes:Array.from(new Uint8Array(await file.arrayBuffer())),before:cam,after:layer.camNow(),same:source===view.state.doc.toString()&&doc===JSON.stringify(store.doc)};
+    },format);
+    await writeFile(`test-output/md-composite-${format}.${format==='pdf'?'pdf':'zip'}`,Buffer.from(result.bytes));
+    assert(result.bytes.length>1000,`${format}: contains export data`);
+    assert(result.same,`${format}: export does not alter text or ink`);
+    assert(Math.abs(result.before.x-result.after.x)<1&&Math.abs(result.before.y-result.after.y)<1&&result.before.zoom===result.after.zoom,`${format}: original camera restored ${JSON.stringify([result.before,result.after])}`);
+  }
+  const cancelled=await page.evaluate(async()=>{
+    const {layer}=window.__md,cam=layer.camNow(),controller=new AbortController();let stopped=false;
+    try{await layer.exportTiles(controller.signal,async()=>{controller.abort();});}catch(e){stopped=e.name==='AbortError';}
+    return {stopped,before:cam,after:layer.camNow()};
+  });
+  assert(cancelled.stopped&&cancelled.before.zoom===cancelled.after.zoom&&Math.abs(cancelled.before.y-cancelled.after.y)<1,'cancel restores camera without leaving export mode');
+});
+
+t('beta14 export: high resolution, vector ink and truthful save notifications',async({page,base,assert})=>{
+  await open(page,base,'?fresh&lang=zh');await stroke(page,toSamples([[0,0],[150,0]],{x0:100,y0:200,scale:1,speed:150}));
+  await page.evaluate(()=>{window.__saved=[];window.__notices=[];window.showSaveFilePicker=async()=>({createWritable:async()=>({write:async f=>window.__saved.push(f),close:async()=>{},abort:async()=>{}})});});
+  for(const format of ['png','svg','pdf']){
+    await page.evaluate(f=>window.__hn.openDocumentExport(f,false),format);await page.getByRole('button',{name:'保存到本机…',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('.test-modal'));
+  }
+  const result=await page.evaluate(async()=>{const [png,svg,pdf]=window.__saved;const bitmap=await createImageBitmap(png);const dims=[bitmap.width,bitmap.height];bitmap.close();return {dims,svg:await svg.text(),pdf:Array.from(new Uint8Array(await pdf.arrayBuffer())),notices:window.__notices};});
+  assert(result.dims[0]>=2400&&result.dims[1]>=3400,'A4 PNG uses about 300 DPI');
+  assert(result.svg.includes('<path')&&!result.svg.includes('data:image/png'),'ordinary SVG keeps vector paper and ink');
+  assert(result.notices.filter(s=>s.startsWith('已导出')).length===3,'each completed local save shows confirmation');
+  await writeFile('test-output/beta14-vector-ink.pdf',Buffer.from(result.pdf));
+  // Cancellation keeps generated data available and never claims success.
+  await page.evaluate(()=>{window.__notices=[];window.showSaveFilePicker=async()=>{throw new DOMException('cancel','AbortError');};window.__hn.openDocumentExport('png',false);});
+  await page.getByRole('button',{name:'保存到本机…',exact:true}).click();await page.waitForFunction(()=>window.__notices.length);
+  assert(await page.locator('.test-modal').count()===1,'cancel keeps generated file ready');
+  assert(await page.evaluate(()=>window.__notices.every(s=>!s.startsWith('已导出'))),'cancel does not report success');
+  await page.evaluate(()=>{window.showSaveFilePicker=undefined;Object.defineProperty(navigator,'canShare',{configurable:true,value:()=>true});Object.defineProperty(navigator,'share',{configurable:true,value:async()=>{}});});
+  await page.getByRole('button',{name:'保存到本机…',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('.test-modal'));
+  assert(await page.evaluate(()=>window.__notices.some(s=>s.includes('交给系统'))),'share reports system handoff, not an unverified disk write');
+});
+
+
+t('beta14 Markdown: beta.8 character highlights stay on the same text after typing',async({page,base,assert})=>{
+ await page.goto(`${base}/experiments/ink-lab/md.html`);await page.waitForFunction(()=>window.__md);
+ const result=await page.evaluate(async()=>{
+  const {layer,view,store,settings}=window.__md;
+  const wait=async()=>{for(let i=0;i<5;i++)await new Promise(requestAnimationFrame);};
+  settings.tool='highlighter';layer.settingsUpdated();
+  const line=view.state.doc.line(5),from=line.from+line.text.indexOf('Markdown'),to=from+8;
+  const a=view.coordsAtPos(from),b=view.coordsAtPos(to),y=(a.top+a.bottom)/2;
+  const send=(type,x)=>view.scrollDOM.dispatchEvent(new PointerEvent(type,{bubbles:true,cancelable:true,pointerType:'pen',pointerId:62,button:0,buttons:type==='pointerup'?0:1,pressure:0.5,clientX:x,clientY:y}));
+  send('pointerdown',a.left);for(let x=a.left+3;x<b.left;x+=3)send('pointermove',x);send('pointerup',b.left);await wait();
+  const st=store.doc.pages[0].strokes[0];if(!st?.span)return {span:false};
+  const original=layer.spanPos.get(st.id),text=view.state.sliceDoc(original.from,original.to);
+  view.dispatch({changes:{from:line.from,insert:'prefix '}});await wait();
+  const moved=layer.spanPos.get(st.id),after=view.state.sliceDoc(moved.from,moved.to);
+  layer.refreshAnchors(store.doc);const copy=structuredClone(store.doc);store.doc=copy;layer.setDocument(copy,false);await wait();
+  const reopened=layer.spanPos.get(st.id);
+  return {span:true,text,after,from:original.from,moved:moved.from,reopened:view.state.sliceDoc(reopened.from,reopened.to)};
+ });
+ assert(result.span,'highlighter records a character range');
+ assert(result.text===result.after&&result.text===result.reopened&&result.moved===result.from+7,'highlight stays on original characters through same-line typing and reopen');
 });

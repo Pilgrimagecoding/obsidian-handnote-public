@@ -8,7 +8,7 @@ import { documentPages, makeSource } from '../../src/import/pages';
 import { openPdf, pdfPageSizes, type PdfJsLib } from '../../src/import/pdf';
 import { parseDocument, recoverDocument, requiredVersion, serializeDocument, validateSource } from '../../src/document/codec';
 import { writeCfb } from './ooxml-helpers';
-import { createDocument, createPage, defaultBackground, type DocSource, type Page } from '../../src/document/model';
+import { FORMAT_VERSION, createDocument, createPage, defaultBackground, type DocSource, type Page } from '../../src/document/model';
 import {
   DocError,
   bucketFor,
@@ -178,12 +178,12 @@ test('v6 format: hostile or malformed references are dropped, never trusted', ()
 });
 
 test('v6 format: a v6 note opens read-only in a version that reads only up to 5 (0.8 behaviour)', () => {
-  // 0.8.x has FORMAT_VERSION 5: version > 5 → read-only (simulated with a v8 file here)
+  // 0.8.x has FORMAT_VERSION 5: version > 5 → read-only (simulated with a future-format file here)
   const doc = createDocument({ pages: 1 });
   const s = source();
   doc.pages = documentPages(s, [{ width: 595, height: 842 }]);
   doc.sources = { [s.id]: s };
-  const v8 = serializeDocument(doc).replace('"version":6', '"version":8');
+  const v8 = serializeDocument(doc).replace('"version":6', `"version":${FORMAT_VERSION + 1}`);
   assert.equal(parseDocument(v8).readOnly, true);
 });
 

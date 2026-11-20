@@ -13,7 +13,24 @@ permissions:
   id-token: write
   attestations: write
 jobs:
+  platform-compatibility:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --no-audit --no-fund
+      - name: Desktop file IO and simulated mobile module isolation
+        run: node scripts/test-note-package.mjs
+      - name: Pen tablet, mouse and touch input regressions
+        run: node scripts/test-platform-input.mjs
   release:
+    needs: platform-compatibility
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -39,6 +56,8 @@ jobs:
             echo "::error::stable tag ${GITHUB_REF_NAME} in a repository with src/private: refused"; exit 1
           fi
       - run: npm run typecheck
+      - name: Markdown public baseline
+        run: node scripts/check-md-public.mjs
       # the public edition is always built and checked, also in the private repository: it must
       # never contain the local math model (scripts/check-edition.mjs)
       - name: Public edition gate
@@ -50,6 +69,8 @@ jobs:
         run: |
           npm test
           node scripts/test-pdf-import.mjs
+          node scripts/test-md-storage.mjs
+          node scripts/test-note-package.mjs
           npm run build
       - run: npm run package
       # Fails if the tag != manifest version, if release/handnote differs from the build, if the

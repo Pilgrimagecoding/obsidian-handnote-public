@@ -114,13 +114,20 @@ function mindMapSvg(it: MindMapItem): string {
   return out.join('');
 }
 
-function itemSvg(it: Item): string {
+function itemSvg(it: Item, imageHref?: (src: string) => string | null): string {
   if (it.type === 'shape') return shapeSvg(it);
   if (it.type === 'formula') return formulaSvg(it);
   if (it.type === 'mindmap') return mindMapSvg(it);
   if (it.type === 'image') {
-    const src = assetDataUrl(it.src) ?? it.src;
-    const href = src.startsWith('data:') ? src : encodeURI(src);
+    const resolved = imageHref?.(it.src);
+    const src = resolved ?? assetDataUrl(it.src) ?? it.src;
+    const href = resolved || src.startsWith('data:') ? src : encodeURI(src);
+    const c = it.crop;
+    if (c && (c[0] || c[1] || c[2] !== 1 || c[3] !== 1)) {
+      // the visible part only: a unit image seen through the crop rectangle (normalized units)
+      const vb = c.map((v) => (Math.round(v * 1e5) / 1e5).toString()).join(' ');
+      return `<g${rotAttr(it)}><svg x="${f2(it.x)}" y="${f2(it.y)}" width="${f2(it.w)}" height="${f2(it.h)}" viewBox="${vb}" preserveAspectRatio="none"><image href="${esc(href)}" width="1" height="1" preserveAspectRatio="none"/></svg></g>`;
+    }
     return `<image href="${esc(href)}" x="${f2(it.x)}" y="${f2(it.y)}" width="${f2(it.w)}" height="${f2(it.h)}" preserveAspectRatio="none"${rotAttr(it)}/>`;
   }
   const L = layoutText(it);
@@ -136,6 +143,24 @@ function inkD(s: Stroke, cache: GeometryCache): string {
   if (s.dash) emitDashedGeometry(sink, cache.get(s), s.dash, s.params.width);
   else emitGeometry(sink, cache.get(s));
   return sink.toString();
+}
+
+/** Shared vector ink for SVG and PDF; merge highlighters before applying opacity. */
+export function inkSvgPaths(page: Page, cache: GeometryCache): { d: string; color: string; opacity: number }[] {
+  const paths: { d: string; color: string; opacity: number }[] = [];
+  const groups = new Map<string, { d: string; color: string; opacity: number }>();
+  for (const stroke of page.strokes) {
+    if (stroke.tool !== 'highlighter') continue;
+    const key = `${stroke.color}|${stroke.params.opacity}`, d = inkD(stroke, cache);
+    const old = groups.get(key);
+    if (old) old.d += d;
+    else groups.set(key, { d, color: stroke.color, opacity: stroke.params.opacity });
+  }
+  paths.push(...groups.values());
+  for (const stroke of page.strokes) if (stroke.tool !== 'highlighter') {
+    paths.push({ d: inkD(stroke, cache), color: stroke.color, opacity: stroke.params.opacity * (stroke.tool === 'pencil' ? 0.85 : 1) });
+  }
+  return paths;
 }
 
 function esc(s: string): string {
@@ -167,8 +192,11 @@ function patternSvg(bg: PageBackground, x0: number, y0: number, x1: number, y1: 
   return '';
 }
 
-/** Export one page as a standalone SVG document (vector, 1 unit = 1 pt). A whiteboard: its content bounds. */
-export function pageToSvg(page: Page, cache: GeometryCache, opts: { background?: boolean } = {}): string {
+/**
+ * Export one page as a standalone SVG document (vector, 1 unit = 1 pt). A whiteboard: its content bounds.
+ * `imageHref`: the URL of an image item's src when it is already resolved (a vault image's blob URL).
+ */
+export function pageToSvg(page: Page, cache: GeometryCache, opts: { background?: boolean; backgroundSvg?: string; imageHref?: (src: string) => string | null } = {}): string {
   const box = pageRenderBox(page);
   const w = f2(box.w);
   const h = f2(box.h);
@@ -189,8 +217,10 @@ export function pageToSvg(page: Page, cache: GeometryCache, opts: { background?:
       parts.push(patternSvg(page.background, 0, 0, box.w, box.h, true));
     }
   }
+  if (opts.backgroundSvg) parts.push(opts.backgroundSvg);
   parts.push('<g>');
-  for (const it of page.items ?? []) if (it.type !== 'text' && it.type !== 'formula') parts.push(itemSvg(it));
+  // below the ink, in the canvas painter's order (paintItemsBelow): images, shapes, mind maps
+  for (const type of ['image', 'shape', 'mindmap']) for (const it of page.items ?? []) if (it.type === type) parts.push(itemSvg(it, opts.imageHref));
   // highlighters grouped (merged path => no overlap darkening), then ink in z-order
   const groups = new Map<string, string[]>();
   for (const s of page.strokes) {

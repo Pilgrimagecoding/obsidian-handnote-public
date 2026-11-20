@@ -1,3 +1,4 @@
+import { notePackages, bindPackageSources } from '../storage/note-package';
 import { FileView, Modal, Notice, Platform, TFile, setIcon, type WorkspaceLeaf } from 'obsidian';
 import { imageMime } from './mime';
 import { HandNoteEditor } from '../editor/handnote-editor';
@@ -6,7 +7,8 @@ import { createDocument, defaultBackground, newId, paperById, type HandNoteDocum
 import { conflictCopyPath, decideExternalChange, decideSave } from '../storage/sync-guard';
 import type HandNotePlugin from './main';
 import { registerSources } from '../rendering/doc-layer';
-import { t } from '../ui/i18n';
+import { t, tf } from '../ui/i18n';
+import { documentMenuActions } from '../ui/document-actions';
 
 export const VIEW_TYPE = 'handnote-view';
 export const EXTENSION = 'handnote';
@@ -87,7 +89,14 @@ export class HandNoteView extends FileView {
     const token = ++this.loadToken;
     this.destroyEditor();
     this.contentEl.empty();
-    const text = await this.app.vault.read(file);
+    let text: string;
+    try { text = await notePackages(this.app).read(file.path); }
+    catch (e) {
+      if (token !== this.loadToken) return;
+      this.readOnly = true;
+      this.contentEl.createDiv({ cls: 'hn-error', text: tf('openFailedNotice', { error: (e as Error).message }) });
+      return;
+    }
     if (token !== this.loadToken) return;
     let doc: HandNoteDocument;
     this.readOnly = false;
@@ -105,18 +114,26 @@ export class HandNoteView extends FileView {
           // read-only and the recovered strokes can be saved as a separate copy
           this.readOnly = true;
           this.recovered = true;
-          new Notice(`HandNote: "${file.basename}" is damaged. ${countStrokes(res.doc)} strokes could be recovered. The file is opened read-only and is not changed; use "Save recovered copy" to keep them.`, 12000);
+          new Notice(tf('recoveredNotice', { name: file.basename, count: countStrokes(res.doc) }), 12000);
           await this.plugin.recovery.backup(res.doc.id + '-damaged', text).catch(() => undefined);
         } else if (res.warnings.length) {
           console.warn('HandNote load warnings', file.path, res.warnings);
         }
         if (res.readOnly) new Notice(res.warnings.join('\n'), 8000);
       } catch (e) {
-        this.contentEl.createDiv({ cls: 'hn-error', text: `This file could not be opened as a HandNote: ${(e as Error).message}. It has not been modified.` });
+        this.contentEl.createDiv({ cls: 'hn-error', text: tf('openFailedNotice', { error: (e as Error).message }) });
         this.readOnly = true;
         return;
       }
     }
+    if (doc.annotates && this.app.vault.getAbstractFileByPath(doc.annotates) instanceof TFile) {
+      // A Markdown sidecar opens the original Markdown with its annotation layer. It must
+      // never mount a second, independent canvas writer for the same ink file.
+      const path = doc.annotates;
+      window.setTimeout(() => { if (token === this.loadToken) void this.plugin.mdInk?.openAnnotations(path, this.leaf); }, 0);
+      return;
+    }
+    bindPackageSources(doc, file.path);
     this.doc = doc;
     this.baseRevision = doc.revision;
     this.lastWrittenRevision = doc.revision;
@@ -165,22 +182,16 @@ export class HandNoteView extends FileView {
         if (!(f instanceof TFile)) return null;
         return new Blob([await this.app.vault.readBinary(f)], { type: imageMime(f.extension) });
       },
-      menuActions: [
-        { label: 'Export page as PNG', run: () => void this.plugin.exportPage(this, 'png') },
-        { label: 'Export page as SVG', run: () => void this.plugin.exportPage(this, 'svg') },
-        { label: t('importDocument'), run: () => this.plugin.importer.open(this) },
-        { label: 'Save now', run: () => void this.flush() },
-        {
-          label: 'Copy performance report',
-          run: () => {
-            const snap = this.editor?.perf.snapshot();
-            void navigator.clipboard
-              .writeText('```json\n' + JSON.stringify(snap, null, 2) + '\n```\n')
-              .then(() => new Notice('HandNote: performance report copied. Paste it into a note.'))
-              .catch(() => new Notice('HandNote: clipboard not available'));
-          },
-        },
-      ],
+      menuActions: documentMenuActions((action, all) => {
+        if (action === 'png' || action === 'svg' || action === 'pdf') this.plugin.exportDocument(this, action, all);
+        else if (action === 'import') this.plugin.importer.open(this);
+        else {
+          const snap = this.editor?.perf.snapshot();
+          void navigator.clipboard.writeText('```json\n' + JSON.stringify(snap, null, 2) + '\n```\n')
+            .then(() => new Notice(t('performanceCopied')))
+            .catch(() => new Notice(t('clipboardUnavailable')));
+        }
+      }),
     });
     this.editor.setReadOnly(this.readOnly);
     this.editor.setStatus(this.readOnly ? 'readonly' : 'saved');
@@ -190,8 +201,8 @@ export class HandNoteView extends FileView {
 
   private showRecoveredBanner(): void {
     const bar = this.contentEl.createDiv({ cls: 'hn-recovered-banner' });
-    bar.createSpan({ text: 'This file is damaged. It is shown read-only with the strokes that could be recovered; the file itself is not changed.' });
-    const btn = bar.createEl('button', { text: 'Save recovered copy', cls: 'mod-cta' });
+    bar.createSpan({ text: t('This file is damaged. It is shown read-only with the strokes that could be recovered; the file itself is not changed.') });
+    const btn = bar.createEl('button', { text: t('Save recovered copy'), cls: 'mod-cta' });
     btn.addEventListener('click', () => void this.saveRecoveredCopy());
   }
 
@@ -201,9 +212,14 @@ export class HandNoteView extends FileView {
     const doc = this.doc;
     if (!file || !doc || !this.recovered) return null;
     const path = conflictCopyPath(file.path, new Date(), (p) => this.app.vault.getAbstractFileByPath(p) !== null, 'recovered');
-    const copy: HandNoteDocument = { ...doc, id: newId('d'), revision: 0, modified: Date.now(), device: this.plugin.settings.deviceId };
-    const created = await this.app.vault.create(path, serializeDocument(copy));
-    new Notice(`HandNote: recovered strokes saved as "${created.basename}".`, 8000);
+    const copy: HandNoteDocument = { ...doc, sources: structuredClone(doc.sources), id: newId('d'), revision: 0, modified: Date.now(), device: this.plugin.settings.deviceId };
+    let created: TFile;
+    if (await notePackages(this.app).isPacked(file.path)) {
+      for (const source of Object.values(copy.sources ?? {})) if (source.containerId === doc.id) source.containerId = copy.id;
+      await notePackages(this.app).copy(file.path, path, serializeDocument(copy));
+      created = this.app.vault.getAbstractFileByPath(path) as TFile;
+    } else created = await this.app.vault.create(path, serializeDocument(copy));
+    new Notice(tf('recoveredSavedNotice', { name: created.basename }), 8000);
     await this.leaf.openFile(created);
     return path;
   }
@@ -278,7 +294,7 @@ export class HandNoteView extends FileView {
     this.saving = this.saving.then(() => this.saveNow()).catch((e) => {
       console.error('HandNote save failed', e);
       this.editor?.setStatus('error');
-      new Notice(`HandNote: saving failed (${(e as Error).message}). Your strokes are kept in memory and in the local recovery journal.`, 10000);
+      new Notice(tf('saveFailedNotice', { error: (e as Error).message }), 10000);
     });
     return this.saving;
   }
@@ -294,7 +310,7 @@ export class HandNoteView extends FileView {
     const decision = decideSave(disk, { docId: doc.id, revision: this.baseRevision });
     if (decision.action === 'missing') {
       this.editor?.setStatus('error');
-      new Notice('HandNote: the file no longer exists on disk; not saving. Your strokes remain in the recovery journal.', 10000);
+      new Notice(t('fileGoneNotice'), 10000);
       return;
     }
     if (decision.action === 'conflict' && disk !== null) {
@@ -311,7 +327,8 @@ export class HandNoteView extends FileView {
     doc.device = this.plugin.settings.deviceId;
     const text = serializeDocument(doc);
     let raced: string | null = null;
-    await this.app.vault.process(file, (current) => {
+    if (await notePackages(this.app).isPacked(file.path)) await notePackages(this.app).write(file.path, text, disk ?? '');
+    else await this.app.vault.process(file, (current) => {
       if (disk !== null && current !== disk) raced = current; // changed between read and write
       return text;
     });
@@ -331,7 +348,7 @@ export class HandNoteView extends FileView {
   private async readDisk(file: TFile): Promise<string | null> {
     try {
       if (!(await this.app.vault.adapter.exists(file.path))) return null;
-      return await this.app.vault.adapter.read(file.path);
+      return await notePackages(this.app).read(file.path);
     } catch {
       return null;
     }
@@ -339,8 +356,9 @@ export class HandNoteView extends FileView {
 
   private async preserveConflict(file: TFile, content: string, reason: string): Promise<void> {
     const path = conflictCopyPath(file.path, new Date(), (p) => this.app.vault.getAbstractFileByPath(p) !== null);
-    await this.app.vault.create(path, content);
-    new Notice(`HandNote: "${file.basename}" was changed elsewhere (${reason}). That version was kept as "${path.split('/').pop()}". Nothing was overwritten.`, 15000);
+    if (await notePackages(this.app).isPacked(file.path)) await notePackages(this.app).copy(file.path, path, content);
+    else await this.app.vault.create(path, content);
+    new Notice(tf('conflictNotice', { name: file.basename, reason, path: path.split('/').pop() ?? path }), 15000);
   }
 
   private async writeJournal(): Promise<void> {
@@ -413,9 +431,10 @@ export class HandNoteView extends FileView {
       if (res.recovered) {
         // a damaged version arrived (interrupted sync / write): keep the intact open version; the
         // next save keeps the damaged one as a conflict copy before writing
-        new Notice(`HandNote: the version of "${file.basename}" that just arrived is damaged. The open version is kept; nothing was overwritten.`, 12000);
+        new Notice(tf('damagedSyncNotice', { name: file.basename }), 12000);
         return;
       }
+      bindPackageSources(res.doc, file.path);
       this.doc = res.doc;
       this.baseRevision = res.doc.revision;
       this.lastWrittenRevision = res.doc.revision;
@@ -423,7 +442,7 @@ export class HandNoteView extends FileView {
       this.editor.setDocument(res.doc, { keepCamera: true });
       this.editor.setReadOnly(res.readOnly);
       this.editor.setStatus('saved');
-      new Notice(`HandNote: reloaded "${file.basename}" (updated by sync).`, 4000);
+      new Notice(tf('reloadedNotice', { name: file.basename }), 4000);
     } catch (e) {
       console.warn('HandNote: external change could not be parsed; keeping the open version', e);
     }
@@ -452,13 +471,13 @@ export class RecoveryModal extends Modal {
   }
   onOpen(): void {
     const { contentEl } = this;
-    contentEl.createEl('h3', { text: 'Unsaved handwriting found' });
+    contentEl.createEl('h3', { text: t('Unsaved handwriting found') });
     contentEl.createEl('p', {
-      text: `This note has unsaved changes from ${this.when} (${this.journalStrokes} strokes) that never reached the file (${this.diskStrokes} strokes). This can happen if Obsidian was closed or suspended right after writing.`,
+      text: tf('journalNotice', { when: this.when, journal: this.journalStrokes, disk: this.diskStrokes }),
     });
     const row = contentEl.createDiv({ cls: 'modal-button-container' });
-    const restore = row.createEl('button', { text: 'Restore unsaved strokes', cls: 'mod-cta' });
-    const discard = row.createEl('button', { text: 'Discard' });
+    const restore = row.createEl('button', { text: t('Restore unsaved strokes'), cls: 'mod-cta' });
+    const discard = row.createEl('button', { text: t('Discard') });
     restore.onclick = () => {
       this.done(true);
       this.close();

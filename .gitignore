@@ -5,6 +5,7 @@ dist/
 .DS_Store
 test-output/
 experiments/ink-lab/lab.js
+experiments/ink-lab/md-lab.js
 release/
 test-vault/
 local-assets/

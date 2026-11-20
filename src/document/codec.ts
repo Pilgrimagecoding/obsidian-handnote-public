@@ -254,6 +254,7 @@ function itemNeedsV5(it: Item): boolean {
 
 /** Lowest format version that can represent the document (see FORMAT_VERSION). */
 export function requiredVersion(doc: HandNoteDocument): number {
+  if (referencedSources(doc).some(s => s.entry)) return 8;
   let v = 1;
   if (doc.pages.some((p) => !!p.board)) return 7;
   // cubic curves (0.12): an older version would draw them as quadratics and drop c2 on save
@@ -330,7 +331,7 @@ export function serializeDocument(doc: HandNoteDocument): string {
     device: doc.device,
     ...(doc.annotates ? { annotates: doc.annotates } : {}),
     // imported documents (v6) are in the header line, so line-based recovery keeps them
-    ...(sources.length ? { sources: sources.map((x) => ({ id: x.id, kind: x.kind, path: x.path, name: x.name, size: x.size, sha256: x.sha256, pages: x.pages, imported: x.imported, ...(x.layout ? { layout: x.layout } : {}) })) } : {}),
+    ...(sources.length ? { sources: sources.map((x) => ({ id: x.id, kind: x.kind, path: x.path, name: x.name, size: x.size, sha256: x.sha256, pages: x.pages, imported: x.imported, ...(x.layout ? { layout: x.layout } : {}), ...(x.entry ? { entry: x.entry, containerId: x.containerId, ...(x.layoutEntry ? { layoutEntry: x.layoutEntry } : {}) } : {}) })) } : {}),
   };
   const lines: string[] = [];
   const h = JSON.stringify(header);
@@ -723,6 +724,7 @@ export function validateSource(o: unknown, warnings: string[]): DocSource | null
     pages: Math.max(0, Math.floor(num(r.pages, 0))),
     imported: num(r.imported, 0),
     ...(typeof r.layout === 'string' && r.layout && r.layout.length <= 1024 ? { layout: r.layout } : {}),
+    ...(typeof r.entry === 'string' && /^sources\/[A-Za-z0-9_.-]+$/.test(r.entry) && typeof r.containerId === 'string' ? { entry: r.entry, containerId: r.containerId, ...(typeof r.layoutEntry === 'string' && /^sources\/[A-Za-z0-9_.-]+$/.test(r.layoutEntry) ? { layoutEntry: r.layoutEntry } : {}) } : {}),
   };
 }
 

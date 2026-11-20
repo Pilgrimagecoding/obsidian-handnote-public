@@ -247,7 +247,7 @@ await step('PNG export and the Markdown embed include the PDF page', async () =>
   for (let i = 0; i < 40 && !(er && isRed(er)); i++) {
     await sleep(300);
     er = await page.evaluate(() => {
-      const c = document.querySelector('.workspace-leaf.mod-active canvas.hn-embed-page');
+      const c = document.querySelector('.workspace-leaf.mod-active .hn-embed-page > canvas.hn-embed-backdrop');
       if (!c || !c.width) return null;
       const k = c.width / 595;
       const d = c.getContext('2d').getImageData(Math.round(100 * k), Math.round(210 * k), 1, 1).data;

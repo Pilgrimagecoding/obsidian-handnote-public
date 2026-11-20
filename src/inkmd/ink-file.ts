@@ -1,7 +1,7 @@
 import { Notice, TFile, type App } from 'obsidian';
 import { parseDocument, serializeDocument } from '../document/codec';
 import { createDocument, defaultBackground, type HandNoteDocument } from '../document/model';
-import { annotationPath, parentFolder } from '../document/annotation-path';
+import { annotationPath, legacyAnnotationPath, parentFolder } from '../document/annotation-path';
 import { conflictCopyPath, decideExternalChange, decideSave } from '../storage/sync-guard';
 import type { RecoveryStore } from '../storage/recovery';
 import { RecoveryModal, countStrokes, peekRevision } from '../plugin/view';
@@ -22,7 +22,7 @@ export interface InkFileHooks {
 
 /**
  * The annotations of one Markdown note (Ink on Markdown, 0.12): a `.handnote` file in
- * `HandNote annotations/` (annotation-path.ts). Same safety as an open note (view.ts): the
+ * the Markdown note's own folder (annotation-path.ts). Same safety as an open note (view.ts): the
  * on-disk revision is checked before each write, a version changed elsewhere is kept as a copy,
  * unsaved ink goes to the recovery journal, a damaged file is shown read-only and never written.
  * The Markdown file itself is never written.
@@ -56,6 +56,7 @@ export class InkFileStore {
   async load(): Promise<HandNoteDocument | null> {
     this.readOnly = false;
     this.dirty = false;
+    await this.migrateLegacy();
     const disk = await this.readDisk();
     this.existed = disk !== null;
     let doc: HandNoteDocument;
@@ -65,6 +66,10 @@ export class InkFileStore {
       try {
         const res = parseDocument(disk);
         doc = res.doc;
+        // A coincidentally named ordinary note is never taken over as an annotation file.
+        if (!doc.annotates || (doc.annotates !== this.mdPath && this.app.vault.getAbstractFileByPath(doc.annotates) instanceof TFile)) {
+          new Notice(t('mdAnnotationCollision'), 10000); return null;
+        }
         this.readOnly = res.readOnly;
         if (res.recovered) {
           this.readOnly = true;
@@ -89,6 +94,29 @@ export class InkFileStore {
     return doc;
   }
 
+  private async migrateLegacy(): Promise<void> {
+    const adapter = this.app.vault.adapter;
+    const old = legacyAnnotationPath(this.mdPath);
+    try {
+      if (await adapter.exists(this.path) || !await adapter.exists(old)) return;
+      const parsed = parseDocument(await adapter.read(old));
+      if (parsed.doc.annotates !== this.mdPath || parsed.readOnly || parsed.recovered) {
+        // Keep damaged/unknown legacy files available for read-only recovery in the old location.
+        this.path = old;
+        return;
+      }
+      const file = this.app.vault.getAbstractFileByPath(old);
+      if (file instanceof TFile) await this.app.vault.rename(file, this.path);
+      else await adapter.rename(old, this.path);
+    } catch (e) {
+      // Another tab may have completed the same migration while this one was awaiting I/O.
+      if (await adapter.exists(this.path) && !await adapter.exists(old)) return;
+      console.warn('HandNote: annotation migration failed', e);
+      this.path = old;
+      new Notice(t('mdMigrationFailed'), 10000);
+    }
+  }
+
   markDirty(): void {
     if (this.readOnly || this.disposed) return;
     this.dirty = true;
@@ -105,6 +133,8 @@ export class InkFileStore {
       void this.writeJournal();
     }, JOURNAL_DELAY_MS);
   }
+
+  get hasUnsavedChanges(): boolean { return this.dirty; }
 
   async flush(): Promise<void> {
     if (this.saveTimer !== null) {
@@ -144,6 +174,7 @@ export class InkFileStore {
     this.hooks.status('saving');
     const seqAtStart = this.changeSeq;
     const disk = await this.readDisk();
+    if (path !== this.path) return this.saveNow();
     if (disk !== null && disk.trim() !== '') {
       const decision = decideSave(disk, { docId: doc.id, revision: this.baseRevision });
       if (decision.action === 'conflict') await this.preserveConflict(disk, decision.reason);
@@ -156,6 +187,7 @@ export class InkFileStore {
       new Notice(t('mdInkRecreated'), 8000);
     }
     this.hooks.beforeSave(doc);
+    if (path !== this.path) return this.saveNow();
     const newRev = Math.max(this.baseRevision, peekRevision(disk)) + 1;
     doc.revision = newRev;
     doc.modified = Date.now();
@@ -172,6 +204,7 @@ export class InkFileStore {
       if (raced !== null) await this.preserveConflict(raced, 'file changed while saving');
     } else {
       await this.ensureFolder(parentFolder(path));
+      if (path !== this.path) return this.saveNow();
       await this.app.vault.create(path, text);
     }
     this.existed = true;

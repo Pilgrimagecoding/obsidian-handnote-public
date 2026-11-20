@@ -5,7 +5,7 @@ import { LASER_HOLD_CHOICES, type EraserMode, type LassoSettings, type LaserSett
 import type { ShapeKind } from '../document/items';
 import { el } from './dom';
 import { setHnIcon } from './icons';
-import { t } from './i18n';
+import { t, onLanguageChange } from './i18n';
 import { onTap } from './tap';
 
 /** Top-level tool groups of the main toolbar. */
@@ -173,8 +173,9 @@ export class Toolbar {
   private pagesBtn: HTMLButtonElement;
   private pageLabel: HTMLElement;
   private statusEl: HTMLElement;
-  private right: HTMLElement;
   private subKey = '';
+  private lastState: ToolbarState | null = null;
+  private unlistenLanguage: () => void;
   private mode: InputMode = 'pen';
 
   constructor(
@@ -196,7 +197,6 @@ export class Toolbar {
       this.groupBtns.set(g, b);
     }
     const right = el('div', 'hn-group hn-right', this.el);
-    this.right = right;
     this.prevBtn = toolButton(right, 'chevron-up', t('prevPage'), 'hn-prev', () => a.onPrev());
     this.pageLabel = el('button', 'hn-page-label', right, '1/1');
     (this.pageLabel as HTMLButtonElement).type = 'button';
@@ -209,19 +209,27 @@ export class Toolbar {
     toolButton(right, 'more', t('more'), 'hn-more-btn', (b) => a.onMore(b));
     this.sub = el('div', 'hn-subbar', parent);
     this.sub.addEventListener('pointerdown', (e) => e.stopPropagation());
+    this.unlistenLanguage = onLanguageChange(() => {
+      const label = (el: Element | null, key: string) => {
+        el?.setAttribute('title', t(key));
+        el?.setAttribute('aria-label', t(key));
+      };
+      label(this.undoBtn, 'undo'); label(this.redoBtn, 'redo'); label(this.pagesBtn, 'pages');
+      label(this.el.querySelector('.hn-more-btn'), 'more');
+      for (const { g, label: key } of GROUPS) label(this.groupBtns.get(g) ?? null, key);
+      this.statusEl.title = t('status.' + this.statusEl.dataset.status);
+      this.subKey = '';
+      this.setMode(this.mode);
+      if (this.lastState) this.update(this.lastState);
+    });
   }
 
   /**
-   * 0.12 Ink on Markdown: no page button and no page navigation; a "Done" button leaves the
-   * annotation mode (back to the normal Markdown view).
+   * 0.12 Ink on Markdown: no page button and no page navigation. The annotation mode is left from
+   * the More menu or the tab's HandNote button.
    */
-  setMarkdown(onDone: () => void): void {
+  setMarkdown(): void {
     this.el.classList.add('is-markdown');
-    const done = el('button', 'hn-done-btn', this.right, t('mdDone'));
-    done.type = 'button';
-    done.title = t('mdExit');
-    done.setAttribute('aria-label', t('mdExit'));
-    onTap(done, () => onDone());
   }
 
   setMode(mode: InputMode): void {
@@ -247,10 +255,11 @@ export class Toolbar {
 
   setStatus(status: 'saved' | 'dirty' | 'saving' | 'error' | 'readonly'): void {
     this.statusEl.dataset.status = status;
-    this.statusEl.title = status;
+    this.statusEl.title = t('status.' + status);
   }
 
   update(s: ToolbarState): void {
+    this.lastState = s;
     const g = groupOf(s.tool);
     for (const [k, b] of this.groupBtns) {
       setSelected(b, k === g);
@@ -491,6 +500,7 @@ export class Toolbar {
   }
 
   destroy(): void {
+    this.unlistenLanguage();
     this.el.remove();
     this.sub.remove();
   }
