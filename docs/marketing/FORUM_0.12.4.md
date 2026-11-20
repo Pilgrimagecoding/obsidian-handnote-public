@@ -15,6 +15,8 @@ This update brings the Markdown annotation improvements together with the latest
 
 Please update HandNote on every device before opening newly packaged imports. Older source documents are not automatically deleted, and sync services may still upload the whole package. Layout-preserving export tiles can split a text line or image at a page boundary.
 
-[Full release notes and downloads](https://github.com/Pilgrimagecoding/obsidian-handnote-public/releases/tag/0.12.4)
+Full release notes are available in the HandNote GitHub repository under Releases → 0.12.4.
 
 Thanks to everyone who reported issues and tested on iPad and desktop.
+
+<!-- Published: https://forum.obsidian.md/t/handnote-apple-pencil-handwriting-and-document-annotation-for-obsidian/120031/6 ; 2026-11-21 Asia/Shanghai. -->
