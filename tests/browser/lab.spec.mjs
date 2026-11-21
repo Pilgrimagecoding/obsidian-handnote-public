@@ -3535,3 +3535,161 @@ t('beta14 Markdown: beta.8 character highlights stay on the same text after typi
  assert(result.span,'highlighter records a character range');
  assert(result.text===result.after&&result.text===result.reopened&&result.moved===result.from+7,'highlight stays on original characters through same-line typing and reopen');
 });
+
+t('Markdown binding: grouped ink shares the anchor of the part on the text, also after a lasso move and undo',async({page,base,assert})=>{
+ await page.goto(`${base}/experiments/ink-lab/md.html`);await page.waitForFunction(()=>window.__md);
+ const r=await page.evaluate(async()=>{
+  const {layer,view,store,settings}=window.__md;settings.mdAutoGroup=false;
+  const wait=async()=>{for(let i=0;i<5;i++)await new Promise(requestAnimationFrame);};
+  const sc=view.scrollDOM;let pid=300;
+  const draw=async(pts)=>{const id=++pid;const send=(type,p)=>sc.dispatchEvent(new PointerEvent(type,{bubbles:true,cancelable:true,pointerType:'pen',pointerId:id,button:0,buttons:type==='pointerup'?0:1,pressure:0.6,clientX:p[0],clientY:p[1]}));send('pointerdown',pts[0]);for(const p of pts.slice(1))send('pointermove',p);send('pointerup',pts[pts.length-1]);await wait();};
+  const mid=(n)=>{const l=view.state.doc.line(n),a=view.coordsAtPos(l.from+2);return {x:a.left,y:(a.top+a.bottom)/2,h:a.bottom-a.top};};
+  const L5=mid(5),L9=mid(9);
+  const circ=[];for(let i=0;i<=40;i++){const a=i/40*2*Math.PI;circ.push([L5.x+30+30*Math.cos(a),L5.y+L5.h*0.7*Math.sin(a)]);}
+  await draw(circ);
+  const arrow=[];for(let i=0;i<=20;i++)arrow.push([L5.x+60+i*8,L5.y+(L9.y-L5.y)*i/20]);
+  await draw(arrow);
+  const [c,a]=store.doc.pages[0].strokes;
+  const lineOf=(id)=>view.state.doc.lineAt(layer.pos.get(id)).number;
+  const alone={c:lineOf(c.id),a:lineOf(a.id)};
+  const y=(id)=>{const st=layer.strokes.find(s=>s.id===id);return st.samples[0].y+layer.shift(st);};
+  // group (lasso → Group)
+  let list=layer.strokes;layer.applyOp({kind:'set-strokes',pageId:'p',before:list,after:list.map(s=>({...s,g:'gT'}))});await wait();
+  const grouped={c:lineOf(c.id),a:lineOf(a.id),same:JSON.stringify(layer.strokes[0].anchor)===JSON.stringify(layer.strokes[1].anchor)};
+  // lasso move down by two lines
+  const dy=(L9.y-L5.y)/2;list=layer.strokes;
+  layer.applyOp({kind:'set-strokes',pageId:'p',before:list,after:list.map(s=>({...s,samples:s.samples.map(q=>({...q,y:q.y+dy})),geom:s.geom&&{...s.geom,ys:s.geom.ys.map(v=>v+dy)}}))});await wait();
+  const moved={c:lineOf(c.id),a:lineOf(a.id)};
+  const gap0=y(a.id)-y(c.id);
+  view.dispatch({changes:{from:view.state.doc.line(moved.c+1).from,insert:'inserted one\ninserted two\n'}});await wait();
+  const gap1=y(a.id)-y(c.id);
+  // undo the insert is a text edit: delete it again, then undo the lasso move
+  view.dispatch({changes:{from:view.state.doc.line(moved.c+1).from,to:view.state.doc.line(moved.c+1).from+'inserted one\ninserted two\n'.length}});await wait();
+  const y0=y(c.id);
+  layer.undo();await wait();
+  const undone=y(c.id);
+  view.dispatch({changes:{from:0,insert:'top\n'}});await wait();
+  const afterTop=y(c.id);
+  return {alone,grouped,moved,gap0,gap1,y0,undone,afterTop,dy,lh:L5.h};
+ });
+ assert(r.alone.c===5&&r.alone.a!==5,'ungrouped: circle on line 5, the arrow on its own line '+JSON.stringify(r.alone));
+ assert(r.grouped.same&&r.grouped.c===5&&r.grouped.a===5,'grouped: one anchor, the circled line '+JSON.stringify(r.grouped));
+ assert(r.moved.c===7&&r.moved.a===7,'after a lasso move the group is anchored to the circled line '+JSON.stringify(r.moved));
+ assert(Math.abs(r.gap1-r.gap0)<0.6,'text inserted between the parts does not pull them apart '+JSON.stringify(r));
+ assert(Math.abs(r.undone-(r.y0-r.dy))<0.6,'undo puts the group back '+JSON.stringify(r));
+ assert(r.afterTop-r.undone>r.lh*0.5,'after undo the group still follows its line '+JSON.stringify(r));
+});
+
+t('Markdown binding: strokes written in one go next to each other become one group',async({page,base,assert})=>{
+ await page.goto(`${base}/experiments/ink-lab/md.html`);await page.waitForFunction(()=>window.__md);
+ const r=await page.evaluate(async()=>{
+  const {layer,view,store,settings}=window.__md;
+  const wait=async()=>{for(let i=0;i<3;i++)await new Promise(requestAnimationFrame);};
+  const sc=view.scrollDOM;let pid=400;
+  const draw=async(x0,y,len=40)=>{const id=++pid;const send=(type,x)=>sc.dispatchEvent(new PointerEvent(type,{bubbles:true,cancelable:true,pointerType:'pen',pointerId:id,button:0,buttons:type==='pointerup'?0:1,pressure:0.6,clientX:x,clientY:y}));send('pointerdown',x0);for(let x=x0+4;x<=x0+len;x+=4)send('pointermove',x);send('pointerup',x0+len);await wait();};
+  const l=view.state.doc.line(5),a=view.coordsAtPos(l.from+2),y=(a.top+a.bottom)/2,lh=a.bottom-a.top;
+  await draw(a.left,y);await draw(a.left+45,y);           // quick, adjacent → one group
+  await draw(a.left+300,y+lh*4);                          // quick but far → alone
+  await new Promise(r=>setTimeout(r,1300));
+  await draw(a.left+305,y+lh*4);                          // adjacent but late → alone
+  const g=store.doc.pages[0].strokes.map(s=>s.g??null);
+  // Ungroup still works
+  const list=layer.strokes;layer.applyOp({kind:'set-strokes',pageId:'p',before:list,after:list.map(s=>{const n={...s};delete n.g;return n;})});await wait();
+  const ungrouped=layer.strokes.every(s=>!s.g);
+  settings.mdAutoGroup=false;
+  await draw(a.left,y+lh*8);await draw(a.left+45,y+lh*8);
+  const off=layer.strokes.slice(-2).map(s=>s.g??null);
+  return {g,ungrouped,off};
+ });
+ assert(r.g[0]&&r.g[0]===r.g[1],'quick adjacent strokes share a group '+JSON.stringify(r.g));
+ assert(r.g[2]!==r.g[1]&&!r.g[3]&&r.g[2]===null,'far or late strokes stay alone '+JSON.stringify(r.g));
+ assert(r.ungrouped,'ungroup removes the group');
+ assert(r.off.every(v=>v===null),'setting off: no auto group');
+});
+
+t('Phone viewport: toolbars fit the screen and scroll sideways; panels stay on screen; canvases at most 2x',async({page,base,assert,shot})=>{
+ const ctx=await page.context().browser().newContext({viewport:{width:390,height:844},deviceScaleFactor:3,hasTouch:true});
+ const ph=await ctx.newPage();
+ try{
+  const check=()=>{const vw=innerWidth;const bar=document.querySelector('.hn-toolbar'),sub=document.querySelector('.hn-subbar');
+   const btns=e=>[...e.querySelectorAll('.hn-btn, .hn-page-label, .hn-swatch')].filter(b=>b.offsetParent&&getComputedStyle(b).visibility!=='hidden');
+   const overlaps=e=>{const rs=btns(e).map(b=>b.getBoundingClientRect());let n=0;for(let i=0;i<rs.length;i++)for(let j=i+1;j<rs.length;j++){const a=rs[i],b=rs[j];if(Math.min(a.right,b.right)-Math.max(a.left,b.left)>1&&Math.min(a.bottom,b.bottom)-Math.max(a.top,b.top)>1)n++;}return n;};
+   const reach=e=>{if(!e)return null;const cs=getComputedStyle(e);e.scrollLeft=e.scrollWidth;const last=btns(e).pop().getBoundingClientRect();const r=e.getBoundingClientRect();const ok=last.right<=Math.min(vw,r.right)+1;e.scrollLeft=0;return {ok,ox:cs.overflowX,ta:cs.touchAction,sw:e.scrollWidth,cw:e.clientWidth,l:r.left,r:r.right};};
+   return {vw,doc:document.documentElement.scrollWidth,barOverlaps:overlaps(bar),subOverlaps:sub?overlaps(sub):0,bar:reach(bar),sub:reach(sub),btnH:bar.querySelector('.hn-btn').getBoundingClientRect().height};};
+  await open(ph,base);
+  const note=await ph.evaluate(check);
+  const dprNote=await ph.evaluate(()=>{const c=document.querySelector('.hn-viewport canvas');return {dpr:window.__hn.editor.dpr,ratio:c.width/c.getBoundingClientRect().width,device:devicePixelRatio};});
+  await ph.screenshot({path:'test-output/phone-note.png'});
+  await ph.locator('.hn-toolbar .hn-more-btn').tap();
+  await ph.waitForSelector('.hn-popover');
+  const pop=await ph.evaluate(()=>{const r=document.querySelector('.hn-popover').getBoundingClientRect();return {l:r.left,r:r.right,vw:innerWidth};});
+  await ph.screenshot({path:'test-output/phone-note-more.png'});
+  await ph.goto(`${base}/experiments/ink-lab/md.html`);await ph.waitForFunction(()=>window.__md);
+  await ph.evaluate(async()=>{for(let i=0;i<5;i++)await new Promise(requestAnimationFrame);});
+  const md=await ph.evaluate(check);
+  const mdInk=await ph.evaluate(async()=>{const {layer,view,store}=window.__md;const sc=view.scrollDOM,r=sc.getBoundingClientRect();
+   const send=(type,x)=>sc.dispatchEvent(new PointerEvent(type,{bubbles:true,cancelable:true,pointerType:'pen',pointerId:77,button:0,buttons:type==='pointerup'?0:1,pressure:0.6,clientX:x,clientY:r.top+200}));
+   send('pointerdown',60);for(let x=64;x<=200;x+=4)send('pointermove',x);send('pointerup',200);for(let i=0;i<5;i++)await new Promise(requestAnimationFrame);
+   return {strokes:store.doc.pages[0].strokes.length,dpr:layer.cv.dpr};});
+  await ph.screenshot({path:'test-output/phone-md.png'});
+  const r={note,dprNote,pop,md,mdInk};
+  assert(note.doc<=note.vw&&md.doc<=md.vw,'nothing sticks out of the screen '+JSON.stringify(r));
+  assert(note.barOverlaps===0&&note.subOverlaps===0,'note: no control lies on another '+JSON.stringify(note));
+  assert(md.barOverlaps===0&&md.subOverlaps===0,'markdown: no control lies on another '+JSON.stringify(md));
+  for(const [k,b] of [['note bar',note.bar],['note sub-bar',note.sub],['md bar',md.bar],['md sub-bar',md.sub]])assert(b&&b.ok&&b.ox==='auto'&&b.ta.includes('pan-x')&&b.l>=0&&b.r<=note.vw,k+': scrolls sideways to its last control '+JSON.stringify(b));
+  assert(note.btnH>=34,'buttons keep a touch size '+note.btnH);
+  assert(pop.l>=0&&pop.r<=pop.vw,'the More panel stays on screen '+JSON.stringify(pop));
+  assert(dprNote.device===3&&dprNote.dpr===2&&Math.abs(dprNote.ratio-2)<0.05,'note canvas at 2x on a 3x phone '+JSON.stringify(dprNote));
+  assert(mdInk.strokes===1&&Math.abs(mdInk.dpr-2)<1e-3,'markdown: pen writes, ink canvas at 2x '+JSON.stringify(mdInk));
+ } finally { await ctx.close(); }
+});
+
+t('Links: [[note]] in a text box is drawn as a link, a finger tap opens it, "[[" picks a note, rename retargets (undoable)', async ({ page, base, assert }) => {
+  await open(page, base, '?fresh&mode=pen');
+  const tap = (x, y, id) => page.evaluate(async ({ x, y, id }) => {
+    const ed = window.__hn.editor, v = document.querySelector('.hn-viewport'), c = ed.pageToClient(0, x, y);
+    const ev = (type) => v.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: id, pointerType: 'touch', clientX: c.x, clientY: c.y, buttons: type === 'pointerup' ? 0 : 1, width: 52, height: 52 }));
+    await new Promise((r) => setTimeout(r, 400)); ev('pointerdown'); await new Promise((r) => setTimeout(r, 40)); ev('pointerup');
+    await new Promise((r) => setTimeout(r, 60));
+  }, { x, y, id });
+  const inserted = await page.evaluate(async () => {
+    window.__links = { opened: [], pick: null };
+    const ok = window.__hn.editor.insertLink('Target note');
+    for (let i = 0; i < 4; i++) await new Promise(requestAnimationFrame);
+    const it = window.__hn.editor.getDocument().pages[0].items.at(-1);
+    return { ok, text: it.text, x: it.x, y: it.y, w: it.w, h: it.h };
+  });
+  assert(inserted.ok && inserted.text === '[[Target note]]', 'insert link adds a text box with the link ' + JSON.stringify(inserted));
+  let purple = 0;
+  for (let x = inserted.x + 4; x < inserted.x + inserted.w - 4; x += 1) for (const dy of [0.4, 0.5, 0.6]) {
+    const p = await pixel(page, x, inserted.y + inserted.h * dy);
+    if (p[2] > 180 && p[2] - p[1] > 60 && p[0] > 60) purple++;
+  }
+  assert(purple > 5, 'the link is drawn in the link colour (' + purple + ' px)');
+  await tap(inserted.x + inserted.w / 2, inserted.y + inserted.h / 2, 51);
+  const opened = await page.evaluate(() => ({ opened: window.__links.opened, editing: !!document.querySelector('.hn-text-editor') }));
+  assert(opened.opened.length === 1 && opened.opened[0] === 'Target note' && !opened.editing, 'a finger tap on the link opens it, no typing ' + JSON.stringify(opened));
+  await page.evaluate(() => window.__hn.editor.undo());
+  assert(await page.evaluate(() => window.__hn.editor.getDocument().pages[0].items.length === 0), 'inserting the link is one undo step');
+  // typing "[[" in a text box asks for a note
+  await page.click('.hn-tool[data-group="text"]');
+  await tap(80, 400, 52);
+  await page.waitForSelector('.hn-text-editor');
+  await page.evaluate(() => { window.__links.pick = 'Picked'; });
+  await page.keyboard.type('see [[');
+  await page.waitForFunction(() => document.querySelector('.hn-text-editor')?.value === 'see [[Picked]]', null, { timeout: 2000 }).catch(() => undefined);
+  const typed = await page.evaluate(() => ({ value: document.querySelector('.hn-text-editor')?.value, focused: document.activeElement === document.querySelector('.hn-text-editor') }));
+  assert(typed.value === 'see [[Picked]]' && typed.focused, '"[[" opens the picker, the link is completed and typing goes on ' + JSON.stringify(typed));
+  await page.keyboard.type(' ok');
+  await page.keyboard.press('Escape');
+  const after = await page.evaluate(() => window.__hn.editor.getDocument().pages[0].items.map((i) => i.text));
+  assert(after[0] === 'see [[Picked]] ok', 'text saved ' + JSON.stringify(after));
+  const renamed = await page.evaluate(() => {
+    const ed = window.__hn.editor;
+    const changed = ed.retargetLinks((t) => t === 'Picked', 'Folder/Renamed');
+    const now = ed.getDocument().pages[0].items[0].text;
+    ed.undo();
+    return { changed, now, undone: ed.getDocument().pages[0].items[0].text };
+  });
+  assert(renamed.changed && renamed.now === 'see [[Folder/Renamed]] ok' && renamed.undone === 'see [[Picked]] ok', 'rename retargets the link, undo restores ' + JSON.stringify(renamed));
+});

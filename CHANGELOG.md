@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.12.6 — 2026-11-21
+
+- Link between HandNote files and other vault notes with `[[Sketch.handnote]]`, a note picker, tap-to-open links and an Insert link command.
+- Publish links to Obsidian's graph/link index and update linked text when a file is renamed, respecting the automatic-link-update setting.
+- Adapt phone toolbars and popovers to narrow screens, safe areas and sideways scrolling; cap phone canvas density at 2× to reduce memory use.
+- Keep grouped Markdown annotations on one anchor, restore their position on undo/redo, and optionally group nearby strokes written in quick succession.
+- Preserve existing file formats, public-edition boundaries and the 0.12.5 community-review fixes.
+
+Release notes: `docs/release-notes/0.12.6.md`.
+
 ## 0.12.5 — 2026-11-21
 
 - Fix community review errors in the standalone browser harness by moving static styles to CSS classes.

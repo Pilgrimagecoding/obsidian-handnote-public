@@ -37,6 +37,10 @@ a separate opt-in, and a confirmation shows what will be sent.
 - `.handnote` notes (your vault; synced only by the sync tool you use).
 - Settings: `<vault>/.obsidian/plugins/handnote/data.json`. It holds **no keys**, only the names
   under which Obsidian's secret storage keeps them.
+- Note links: text-box wikilinks are read from `.handnote` files and published to Obsidian's local
+  graph/link index. A rebuildable cache of file paths, modification times, sizes and link targets
+  is stored at `<vault>/.obsidian/plugins/handnote/links.json`; nothing is uploaded. Target renames
+  update linked text only when Obsidian's automatic internal-link updates are enabled.
 - API / MyScript keys: Obsidian's secret storage.
 - Recovery journal and backups: `<vault>/.obsidian/plugins/handnote/journal/` and `backups/`, to
   recover unsaved strokes after a crash.
@@ -47,7 +51,8 @@ a separate opt-in, and a confirmation shows what will be sent.
 
 ## Files outside the vault
 
-HandNote reads and writes only inside your vault (notes, attachments, the plugin folder) and the
-app's own browser storage.
+Notes, attachments and the plugin's caches are stored inside your vault or the app's browser
+storage. Import reads the document you select. Export can write a generated PDF, PNG or SVG to
+the local destination you choose through the save dialog or share sheet.
 
 Questions: open an issue (see `SECURITY.md` for anything security-related).

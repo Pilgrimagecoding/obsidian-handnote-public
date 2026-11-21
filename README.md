@@ -76,7 +76,15 @@ Markdown note as `Note.md.handnote`; **the `.md` file is never changed**. Existi
 remain compatible. In editing view, notes with annotations open annotation mode automatically.
 Use the More menu to export Markdown and ink together as PDF, PNG or SVG, or to leave annotation
 mode. The title-bar HandNote icon also toggles it. iPad zoom and inline SVG embed previews keep
-text and ink sharp. [What's new in 0.12.4](docs/release-notes/0.12.4.md).
+text and ink sharp. Grouped ink shares one line anchor; nearby strokes written in quick succession
+can group automatically (optional in settings). [What's new in 0.12.6](docs/release-notes/0.12.6.md).
+
+## Link your notes
+
+Write `[[Sketch.handnote]]` in a text box and tap the link to open another HandNote file, or link
+to an ordinary Markdown note. Type `[[` to choose a file, or run **Insert link to a note**.
+Links appear in Obsidian's graph/link index and follow target renames when automatic link updates
+are enabled. The backlinks pane may not list links originating in `.handnote` files.
 
 ## Formulas as LaTeX
 
@@ -246,7 +254,7 @@ purpose, data sent, cost, offline behaviour — is listed in [PRIVACY.md](PRIVAC
   1.6–1.9 times larger than before.
 - Ink on Markdown notes shows only in the editing view (not in reading view or embeds), supports combined PDF / PNG / SVG export, and its lasso has no Convert / AI. Ink follows its line, not the shape
   of the sentence; on a device with another font or width its horizontal position can differ.
-- Phone layouts are not optimised.
+- Phone toolbars scroll horizontally and popovers fit narrow screens; physical phone verification is still limited.
 - `main.js` is about 6.5 MB because the recognition runtime is built in. Obsidian Sync's Standard
   plan does not sync files over 5 MB, so with that plan install HandNote on each device from
   Community plugins (your notes sync as usual).

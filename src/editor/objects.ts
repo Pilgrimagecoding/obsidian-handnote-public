@@ -62,6 +62,8 @@ export interface ObjectHost {
   onEditStart(ta: HTMLTextAreaElement): void;
   /** Open the LaTeX editor of a formula item. */
   editFormula(pageId: string, id: string): void;
+  /** "[[" typed in a text box: choose a note to link to (Obsidian link text), null = cancelled. */
+  pickLink?(): Promise<string | null>;
   /** Copy plain text to the clipboard. */
   copyText(text: string): Promise<boolean>;
   /** An object was copied (shared clipboard + system clipboard). */
@@ -115,6 +117,8 @@ export class ObjectController {
   private drag: Drag | null = null;
   private cropMode = false;
   private editor: { pageId: string; id: string; ta: HTMLTextAreaElement; before: Item[]; isNew: boolean; kind: 'text' | 'label' | 'topic'; topic?: string; unit?: { ids: string[]; text: string } } | null = null;
+  /** the note picker opened from the text being edited is open (its focus loss does not end editing) */
+  private pickingLink = false;
   /** Selected topic of the selected mind map. */
   private topic: string | null = null;
   private clipboard: Item[] = [];
@@ -612,7 +616,10 @@ export class ObjectController {
     ta.setAttribute('inputmode', 'text');
     ta.setAttribute('enterkeyhint', 'enter');
     ta.addEventListener('pointerdown', (e) => e.stopPropagation());
-    ta.addEventListener('input', () => this.onEditInput());
+    ta.addEventListener('input', (e) => {
+      this.onEditInput();
+      if (kind === 'text' && (e as InputEvent).data?.endsWith('[') && ta.value.slice(0, ta.selectionStart).endsWith('[[')) void this.pickLinkInto(ta);
+    });
     ta.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
         e.preventDefault();
@@ -630,7 +637,7 @@ export class ObjectController {
     ta.addEventListener('blur', () => {
       // a tap on the floating bar must not end editing before its click runs
       window.setTimeout(() => {
-        if (this.editor?.ta === ta && document.activeElement !== ta) {
+        if (this.editor?.ta === ta && document.activeElement !== ta && !this.pickingLink) {
           this.finishEdit();
           this.sync();
         }
@@ -645,6 +652,75 @@ export class ObjectController {
     this.pendingFocus = ta;
     this.focusEditor();
     this.h.onEditStart(ta);
+  }
+
+  /** "[[" before the caret: the chosen note's link replaces it (cancelled: the text stays as typed). */
+  private async pickLinkInto(ta: HTMLTextAreaElement): Promise<void> {
+    const pick = this.h.pickLink;
+    if (!pick || this.pickingLink) return;
+    this.pickingLink = true;
+    let link: string | null = null;
+    try {
+      link = await pick.call(this.h);
+    } finally {
+      this.pickingLink = false;
+    }
+    if (this.editor?.ta !== ta || !ta.isConnected) return;
+    ta.focus({ preventScroll: true });
+    if (link) this.insertAtCaret(ta, `${link}]]`, true);
+  }
+
+  /** Text into the box being edited at its caret (`afterBrackets`: right after a typed "[["). */
+  private insertAtCaret(ta: HTMLTextAreaElement, s: string, afterBrackets = false): void {
+    const a = ta.selectionStart;
+    const b = ta.selectionEnd;
+    // a closing "]]" the keyboard already added is kept once
+    const rest = ta.value.slice(b);
+    const tail = afterBrackets && rest.startsWith(']]') ? rest.slice(2) : rest;
+    ta.value = ta.value.slice(0, a) + s + tail;
+    const at = a + s.length;
+    ta.setSelectionRange(at, at);
+    this.onEditInput();
+  }
+
+  /**
+   * Insert a link: into the text being edited (at the caret), else as a new text box at (x, y)
+   * of page `r` (one undo step). Returns false when read-only.
+   */
+  insertLink(link: string, r: PageRect | null, x: number, y: number): boolean {
+    if (this.h.readOnly()) return false;
+    const e = this.editor;
+    if (e && e.kind === 'text') {
+      this.insertAtCaret(e.ta, `[[${link}]]`);
+      e.ta.focus({ preventScroll: true });
+      return true;
+    }
+    if (!r) return false;
+    this.finishEdit();
+    const s = this.h.settings().text;
+    const item: TextItem = fitTextBox({
+      id: newId('i'),
+      type: 'text',
+      x: r.page.board ? x : Math.max(0, x),
+      y: r.page.board ? y : Math.max(0, y),
+      w: s.size * 2,
+      h: s.size * LINE_HEIGHT + TEXT_PAD * 2,
+      created: Date.now(),
+      text: `[[${link}]]`,
+      size: s.size,
+      color: s.color,
+      font: s.font,
+      bold: s.bold,
+      italic: s.italic,
+      align: s.align,
+      autoWidth: true,
+    });
+    const before = r.page.items;
+    r.page.items = [...before, item];
+    this.h.commit(r.page.id, before, r.page.items);
+    this.select(r.page.id, item.id);
+    this.h.requestScene();
+    return true;
   }
 
   /** Focus the text editor (also called from a touchend handler so iOS opens the keyboard). */

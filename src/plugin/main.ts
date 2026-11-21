@@ -47,6 +47,7 @@ import { DocumentImporter, IMPORT_EXTENSIONS } from './import';
 import { ensureDocPage } from '../rendering/doc-layer';
 import { MdInkManager } from '../inkmd/md-ink-manager';
 import { openPdfExport, openDocumentExport } from './pdf-export';
+import { HandNoteLinks, pickNoteLink } from './links';
 
 export default class HandNotePlugin extends Plugin {
   /** Markdown embeds of handwritten notes (exposed for tests: mount counter). */
@@ -59,6 +60,8 @@ export default class HandNotePlugin extends Plugin {
   handFont!: HandFont;
   importer!: DocumentImporter;
   mdInk: MdInkManager | null = null;
+  /** [[links]] in handwritten notes: graph / link counts, rename updates */
+  links!: HandNoteLinks;
   private settingsTimer: number | null = null;
 
   async onload(): Promise<void> {
@@ -151,6 +154,8 @@ export default class HandNotePlugin extends Plugin {
     // 0.12 Ink on Markdown: HandNote ink in Obsidian's own Markdown editor
     this.mdInk = new MdInkManager(this);
     this.mdInk.start();
+    this.links = new HandNoteLinks(this, normalizePath(`${dir}/links.json`));
+    this.links.start();
     try {
       this.registerExtensions([EXTENSION], VIEW_TYPE);
     } catch (e) {
@@ -256,6 +261,17 @@ export default class HandNotePlugin extends Plugin {
     });
     this.addTranslatedCommand({ id: 'export-pdf', name: 'exportPdf',
       checkCallback: (checking) => this.withView(checking, (v) => this.exportPdf(v)), });
+    this.addTranslatedCommand({
+      id: 'insert-link',
+      name: 'cmd.insertLink',
+      checkCallback: (checking) =>
+        this.withView(checking, (v) => {
+          const from = v.file?.path ?? '';
+          void pickNoteLink(this.app, from).then((link) => {
+            if (link) v.editor?.insertLink(link);
+          });
+        }),
+    });
     this.addTranslatedCommand({ id: 'save-now', name: 'saveNow',
       checkCallback: (checking) => this.withView(checking, (v) => void v.flush()), });
     // 0.10: every tool and page action as a command, so it can get its own hotkey
@@ -742,6 +758,7 @@ class HandNoteSettingTab extends PluginSettingTab {
     toggle(containerEl, 'set.tapGestures', null, () => s.editor.tapGestures, (v) => (s.editor.tapGestures = v));
     toggle(containerEl, 'fingerDoubleTap', 'fingerDoubleTapDesc', () => s.editor.fingerDoubleTapEraser, (v) => (s.editor.fingerDoubleTapEraser = v));
     toggle(containerEl, 'highlighterStraight', 'set.highlighterDesc', () => s.editor.highlighterStraight, (v) => (s.editor.highlighterStraight = v));
+    toggle(containerEl, 'mdAutoGroup', 'set.mdAutoGroupDesc', () => s.editor.mdAutoGroup, (v) => (s.editor.mdAutoGroup = v));
     new Setting(containerEl).setName(t('set.eraser')).addSlider((sl) =>
       sl
         .setLimits(4, 40, 1)

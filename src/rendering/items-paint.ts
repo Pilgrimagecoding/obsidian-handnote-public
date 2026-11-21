@@ -3,6 +3,7 @@ import { arrowEnds, arrowTangents, connectorPoints, isLine, itemCenter, shapeOut
 import { lineDashArray } from './dash';
 import { paintFormula } from './formula';
 import { paintMindMap } from '../mindmap/paint';
+import { findLinks, type TextLink } from '../document/links';
 
 // ------------------------------------------------------------------------------------------------
 // Image store: resolves item.src (vault path or data URL) to a loaded <img>
@@ -224,6 +225,14 @@ export function fitTextBox(it: TextItem): TextItem {
   return { ...it, w, h: L.height };
 }
 
+/** Colour of `[[links]]` in text boxes (Obsidian's default link colour). */
+export const LINK_COLOR = '#7f6df2';
+
+function lineStart(it: TextItem, lw: number): number {
+  const innerW = it.w - TEXT_PAD * 2;
+  return it.align === 'center' ? it.x + TEXT_PAD + (innerW - lw) / 2 : it.align === 'right' ? it.x + it.w - TEXT_PAD - lw : it.x + TEXT_PAD;
+}
+
 function paintText(ctx: CanvasRenderingContext2D, it: TextItem): void {
   if (!it.text) return;
   if (it.font === 'hand') requestGlyphs(it.text);
@@ -233,14 +242,60 @@ function paintText(ctx: CanvasRenderingContext2D, it: TextItem): void {
   ctx.fillStyle = it.color;
   ctx.textBaseline = 'alphabetic';
   const lh = it.size * LINE_HEIGHT;
-  const innerW = it.w - TEXT_PAD * 2;
   L.lines.forEach((line, i) => {
-    const lw = ctx.measureText(line).width;
-    const x = it.align === 'center' ? it.x + TEXT_PAD + (innerW - lw) / 2 : it.align === 'right' ? it.x + it.w - TEXT_PAD - lw : it.x + TEXT_PAD;
+    const x = lineStart(it, ctx.measureText(line).width);
     const y = it.y + TEXT_PAD + i * lh + it.size * 1.02;
-    ctx.fillText(line, x, y);
+    const links = findLinks(line);
+    if (!links.length) {
+      ctx.fillText(line, x, y);
+      return;
+    }
+    // a link (as typed) in the link colour, underlined; the rest in the text's colour
+    let at = 0;
+    const part = (from: number, to: number, link: boolean): void => {
+      if (to <= from) return;
+      const x0 = x + ctx.measureText(line.slice(0, from)).width;
+      ctx.fillStyle = link ? LINK_COLOR : it.color;
+      ctx.fillText(line.slice(from, to), x0, y);
+      if (link) ctx.fillRect(x0, y + it.size * 0.12, x + ctx.measureText(line.slice(0, to)).width - x0, Math.max(0.6, it.size * 0.06));
+    };
+    for (const l of links) {
+      part(at, l.start, false);
+      part(l.start, l.end, true);
+      at = l.end;
+    }
+    part(at, line.length, false);
   });
   ctx.restore();
+}
+
+/**
+ * The link of a text box under page point (x, y), or null. Same layout as the drawing (links are
+ * found per drawn line; a rotated box is turned back first).
+ */
+export function linkAt(it: TextItem, x: number, y: number): TextLink | null {
+  if (!it.text.includes('[[')) return null;
+  if (it.rot) {
+    const [cx, cy] = itemCenter(it);
+    const c = Math.cos(-it.rot);
+    const s = Math.sin(-it.rot);
+    const dx = x - cx;
+    const dy = y - cy;
+    x = cx + dx * c - dy * s;
+    y = cy + dx * s + dy * c;
+  }
+  const L = layoutText(it);
+  const lh = it.size * LINE_HEIGHT;
+  const i = Math.floor((y - it.y - TEXT_PAD) / lh);
+  const line = L.lines[i];
+  if (line === undefined) return null;
+  const x0 = lineStart(it, textWidth(it, line));
+  for (const l of findLinks(line)) {
+    const a = x0 + textWidth(it, line.slice(0, l.start));
+    const b = x0 + textWidth(it, line.slice(0, l.end));
+    if (x >= a - 2 && x <= b + 2) return l;
+  }
+  return null;
 }
 
 // ------------------------------------------------------------------------------------------------

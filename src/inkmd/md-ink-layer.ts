@@ -23,6 +23,7 @@ import { ERASER_SIZES, addPaletteColor, type EditorSettings } from '../editor/se
 import { Toolbar, groupOf, type PenKind, type ToolGroup } from '../ui/toolbar';
 import { t } from '../ui/i18n';
 import { onTap } from '../ui/tap';
+import { canvasDpr } from '../ui/phone';
 import { setHnIcon } from '../ui/icons';
 import { InputRouter, type PointerKind, type RouterHost, type RouterPointer } from '../input/input-router';
 import type { Camera } from '../editor/camera';
@@ -159,6 +160,9 @@ interface UndoOp {
 /** Points per text row of a highlighter laid on text (samples and stored ink). */
 const SPAN_PTS = 6;
 
+/** A stroke begun within this time (ms) after the previous one ended, next to it, joins its group. */
+const AUTO_GROUP_MS = 1000;
+
 /** Largest image accepted (bytes). */
 const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
 
@@ -236,6 +240,8 @@ export class MdInkLayer {
   private erase: ActiveErase | null = null;
   private pinch: Pinch | null = null;
   private lastInkEnd = 0;
+  /** the last ordinary stroke written and when it ended (Date.now), for auto-grouping */
+  private lastInk: { id: string; at: number } | null = null;
   private raf = 0;
   private needsInk = true;
   private readOnly = false;
@@ -398,7 +404,7 @@ export class MdInkLayer {
           return r ? [r] : [];
         },
         camera: () => this.objCamera(),
-        dpr: () => Math.min(window.devicePixelRatio || 1, 3),
+        dpr: () => canvasDpr(),
         settings: () => this.host.settings(),
         readOnly: () => this.readOnly,
         setSkip: (ids) => {
@@ -765,8 +771,8 @@ export class MdInkLayer {
     if (!op || this.readOnly) return;
     this.redoStack.push(op);
     this.lasso.clear();
-    if (op.items) this.setItems(op.items.before);
-    if (op.strokes) this.setStrokes(op.strokes.before);
+    if (op.items) this.setItems(this.repos(op.items.before, op.items.after));
+    if (op.strokes) this.setStrokes(this.repos(op.strokes.before, op.strokes.after));
     this.updateToolbar();
   }
 
@@ -776,9 +782,20 @@ export class MdInkLayer {
     if (!op || this.readOnly) return;
     this.undoStack.push(op);
     this.lasso.clear();
-    if (op.items) this.setItems(op.items.after);
-    if (op.strokes) this.setStrokes(op.strokes.after);
+    if (op.items) this.setItems(this.repos(op.items.after, op.items.before));
+    if (op.strokes) this.setStrokes(this.repos(op.strokes.after, op.strokes.before));
     this.updateToolbar();
+  }
+
+  /**
+   * Undo / redo: what comes back (not in `current`) finds its own anchor line again — the position
+   * map still points to the line its replacement was anchored to (a lasso move to another line).
+   */
+  private repos<T extends { id: string; anchor?: { line: number; text: string; top: number } }>(list: T[], current: readonly T[]): T[] {
+    const keep = new Set(current);
+    const d = this.view.state.doc;
+    for (const x of list) if (x.anchor && !keep.has(x)) this.pos.set(x.id, d.line(relocateLine(x.anchor, d)).from);
+    return list;
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -921,6 +938,8 @@ export class MdInkLayer {
     if (!page) return;
     const ops = op.kind === 'batch' ? op.ops : [op];
     const undo: UndoOp = {};
+    // groups with a changed member: anchored together afterwards
+    const groups = new Set<string>();
     for (const o of ops) {
       if (o.kind === 'set-strokes') {
         const before = new Set(o.before);
@@ -940,15 +959,33 @@ export class MdInkLayer {
           }
           const c: Stroke = { ...st };
           this.anchor(c);
+          if (c.g) groups.add(c.g);
           return [c];
         });
         undo.strokes = { before: undo.strokes?.before ?? this.strokes, after };
         this.setStrokes(after);
       } else if (o.kind === 'set-items') {
         const before = new Set(o.before);
-        const after = o.after.map((it) => (before.has(it) ? it : this.anchorItem(it)));
+        const after = o.after.map((it) => {
+          if (before.has(it)) return it;
+          if (it.g) groups.add(it.g);
+          return this.anchorItem(it);
+        });
         undo.items = { before: undo.items?.before ?? o.before, after };
         page.items = after;
+        this.store.markDirty();
+        this.inkX = undefined;
+      }
+    }
+    if (groups.size) {
+      const r = this.anchorGroups(this.strokes, page.items, groups);
+      if (r.strokes !== this.strokes) {
+        undo.strokes = { before: undo.strokes?.before ?? this.strokes, after: r.strokes };
+        this.setStrokes(r.strokes);
+      }
+      if (r.items !== page.items) {
+        undo.items = { before: undo.items?.before ?? page.items, after: r.items };
+        page.items = r.items;
         this.store.markDirty();
         this.inkX = undefined;
       }
@@ -1272,7 +1309,7 @@ export class MdInkLayer {
     if (vw < 2 || vh < 2) return false;
     if (this.overlay) return this.placeOverlay(vw);
     // canvas pixels per scroll px: sharp at the zoom of the box
-    const dpr = Math.min(window.devicePixelRatio || 1, 3) * this.boxScale();
+    const dpr = canvasDpr() * this.boxScale();
     if (this.covered() && Math.abs(this.cv.dpr - dpr) < 1e-3 && this.cv.vw === vw) return false;
     this.sizeClip();
     // overscan: half a screen above and below; a little to the sides when the view can move sideways
@@ -1303,7 +1340,7 @@ export class MdInkLayer {
   /** Sharp zoom: the ink canvas covers the visible part of the note, in screen px; drawn again whenever the view moves. */
   private placeOverlay(vw: number): boolean {
     const sc = this.view.scrollDOM;
-    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    const dpr = canvasDpr();
     const c = this.cv;
     if (this.covered() && Math.abs(c.dpr - dpr) < 1e-3) return false;
     this.sizeClip();
@@ -1431,7 +1468,7 @@ export class MdInkLayer {
       l.top = 0;
       l.w = r.w;
       l.h = r.h;
-      l.dpr = Math.min(window.devicePixelRatio || 1, 3);
+      l.dpr = canvasDpr();
       l.ov = true;
       l.ol = r.left;
       l.ot = r.top;
@@ -1440,7 +1477,7 @@ export class MdInkLayer {
       l.top = Math.round(sc.scrollTop);
       l.w = sc.clientWidth;
       l.h = sc.clientHeight;
-      l.dpr = Math.min(window.devicePixelRatio || 1, 3) * this.boxScale();
+      l.dpr = canvasDpr() * this.boxScale();
       l.ov = false;
     }
     this.place(this.liveCanvas, l.left, l.top, l.w, l.h, l.dpr);
@@ -2411,8 +2448,9 @@ export class MdInkLayer {
     if (!(a.shape && this.commitShape(stroke))) {
       if (a.tool === 'highlighter' && this.host.settings().highlighterStraight) this.straighten(stroke);
       this.cache.set(stroke, geometryFromStored(stroke.geom));
-      this.commit([...this.strokes, this.layOnText(stroke)]);
-    }
+      const laid = this.layOnText(stroke);
+      this.commit(this.autoGroup([...this.strokes, laid], laid, a.created));
+    } else this.lastInk = null;
     // the committed ink is drawn before the live layer is cleared: nothing blinks
     this.placeCanvases();
     this.renderInk();
@@ -2500,25 +2538,131 @@ export class MdInkLayer {
    * (shape pen, lasso) shares one anchor, computed from all of them.
    */
   private anchor(s: Stroke, group: Stroke[] = [s]): void {
-    let y0 = Infinity;
-    let y1 = -Infinity;
+    const { anchor, from } = this.groupLine(group.map((g) => this.box(g)));
     for (const g of group) {
-      const b = this.box(g);
-      y0 = Math.min(y0, b.y0);
-      y1 = Math.max(y1, b.y1);
+      g.anchor = { ...anchor };
+      this.pos.set(g.id, from);
     }
+  }
+
+  /**
+   * The line a group of boxes (document px) belongs to: that of the part on the text — of those
+   * that touch characters the one of the fewest lines (a circle round a word, not the arrow from it
+   * into the margin) — else the line at the vertical centre of them all.
+   */
+  private groupLine(boxes: Box[]): { anchor: { line: number; text: string; top: number }; from: number } {
     const v = this.view;
     const d = v.state.doc;
     const u = this.hUnit();
-    const yc = Math.min(v.contentHeight, Math.max(0, ((y0 + y1) / 2) * u));
-    const block = v.lineBlockAtHeight(yc);
-    const n = pickAnchorLine(d.lineAt(block.from).number, d);
-    const line = d.line(n);
-    const anchor = { line: n, text: anchorText(line.text), top: v.lineBlockAt(line.from).top / u };
-    for (const g of group) {
-      g.anchor = { ...anchor };
-      this.pos.set(g.id, line.from);
+    const lineAtY = (y: number) => d.lineAt(v.lineBlockAtHeight(Math.min(v.contentHeight, Math.max(0, y * u))).from);
+    let best: Box | null = null;
+    if (boxes.length > 1) for (const b of boxes) if ((!best || b.y1 - b.y0 < best.y1 - best.y0) && this.touchesText(b, lineAtY)) best = b;
+    let y: number;
+    if (best) y = (best.y0 + best.y1) / 2;
+    else {
+      let y0 = Infinity;
+      let y1 = -Infinity;
+      for (const b of boxes) {
+        y0 = Math.min(y0, b.y0);
+        y1 = Math.max(y1, b.y1);
+      }
+      y = (y0 + y1) / 2;
     }
+    const n = pickAnchorLine(lineAtY(y).number, d);
+    const line = d.line(n);
+    return { anchor: { line: n, text: anchorText(line.text), top: v.lineBlockAt(line.from).top / u }, from: line.from };
+  }
+
+  /** The box (document px) overlaps characters of the note (a line not rendered counts if it has text). */
+  private touchesText(b: Box, lineAtY: (y: number) => { number: number }): boolean {
+    const d = this.view.state.doc;
+    const g = this.geo();
+    const first = lineAtY(b.y0).number;
+    const last = Math.min(lineAtY(b.y1).number, first + 40);
+    for (let n = first; n <= last; n++) {
+      const line = d.line(n);
+      if (!line.text.trim()) continue;
+      const rows = this.textRows(line.from, line.to);
+      if (!rows) return true;
+      for (const w of rows) {
+        const x0 = (w.x0 - g.cx) / g.sx;
+        const x1 = (w.x1 - g.cx) / g.sx;
+        const y0 = (w.y0 - g.cy) / g.sy;
+        const y1 = (w.y1 - g.cy) / g.sy;
+        if (b.x0 < x1 && b.x1 > x0 && b.y0 < y1 && b.y1 > y0) return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Members of these groups share one anchor (groupLine), so a text edit between them never pulls
+   * them apart. Everything stays where it is: the anchor is its line's position now. Highlighters
+   * laid on text keep their characters. Returns the same arrays when nothing changed.
+   */
+  private anchorGroups(strokes: Stroke[], items: Item[], ids: ReadonlySet<string>): { strokes: Stroke[]; items: Item[] } {
+    const boxes = new Map<string, Box[]>();
+    const add = (g: string, b: Box): void => {
+      const list = boxes.get(g);
+      if (list) list.push(b);
+      else boxes.set(g, [b]);
+    };
+    for (const st of strokes) if (st.g && ids.has(st.g) && !st.span) add(st.g, this.box(st));
+    for (const it of items) if (it.g && ids.has(it.g)) add(it.g, { x0: it.x, y0: it.y, x1: it.x + it.w, y1: it.y + it.h });
+    const lines = new Map<string, ReturnType<MdInkLayer['groupLine']>>();
+    for (const [g, list] of boxes) lines.set(g, this.groupLine(list));
+    const same = (a: { line: number; text: string; top: number } | undefined, b: { line: number; text: string; top: number }): boolean => !!a && a.line === b.line && a.text === b.text && Math.abs(a.top - b.top) < 0.01;
+    let changedS = false;
+    const nextS = strokes.map((st) => {
+      const l = st.g && !st.span ? lines.get(st.g) : undefined;
+      if (!l) return st;
+      this.pos.set(st.id, l.from);
+      if (same(st.anchor, l.anchor)) return st;
+      changedS = true;
+      const c: Stroke = { ...st, anchor: { ...l.anchor } };
+      this.cache.set(c, this.cache.get(st));
+      this.boxes.set(c, this.box(st));
+      return c;
+    });
+    let changedI = false;
+    const nextI = items.map((it) => {
+      const l = it.g ? lines.get(it.g) : undefined;
+      if (!l) return it;
+      this.pos.set(it.id, l.from);
+      if (same(it.anchor, l.anchor)) return it;
+      changedI = true;
+      return { ...it, anchor: { ...l.anchor } };
+    });
+    return { strokes: changedS ? nextS : strokes, items: changedI ? nextI : items };
+  }
+
+  /**
+   * Ink written in one go (a circle and its arrow, the letters of a word) becomes one group: begun
+   * within AUTO_GROUP_MS of the end of the previous stroke and next to it (setting). Lasso → Ungroup
+   * separates it again.
+   */
+  private autoGroup(list: Stroke[], st: Stroke, started: number): Stroke[] {
+    const last = this.lastInk;
+    this.lastInk = st.span ? null : { id: st.id, at: Date.now() };
+    const page = this.page;
+    if (!last || st.span || !page || !this.host.settings().mdAutoGroup || started - last.at > AUTO_GROUP_MS) return list;
+    const prev = list.find((s) => s.id === last.id);
+    if (!prev || prev === st || prev.span) return list;
+    const a = this.box(prev);
+    const b = this.box(st);
+    const gap = Math.max(a.x0 - b.x1, b.x0 - a.x1, a.y0 - b.y1, b.y0 - a.y1, 0);
+    if (gap > (0.6 * this.view.defaultLineHeight) / this.geo().sy) return list;
+    const g = prev.g ?? newId('g');
+    const grouped = list.map((s) => {
+      if (s !== prev && s !== st) return s;
+      const c: Stroke = { ...s, g };
+      this.cache.set(c, this.cache.get(s));
+      this.boxes.set(c, this.box(s));
+      return c;
+    });
+    const r = this.anchorGroups(grouped, page.items, new Set([g]));
+    if (r.items !== page.items) page.items = r.items;
+    return r.strokes;
   }
 
   /** Highlighter: a nearly straight stroke becomes straight (setting, as in notes). */

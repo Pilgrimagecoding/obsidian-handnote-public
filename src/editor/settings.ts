@@ -121,6 +121,8 @@ export interface EditorSettings {
   usePrediction: boolean;
   /** A highlighter stroke that is nearly straight becomes an exactly straight one (0.12, like GoodNotes). */
   highlighterStraight: boolean;
+  /** Ink on Markdown: strokes written in quick succession next to each other become one group. */
+  mdAutoGroup: boolean;
   /** Two-finger tap = undo, three-finger tap = redo. */
   tapGestures: boolean;
   /**
@@ -179,6 +181,7 @@ export function defaultEditorSettings(): EditorSettings {
     fingerDrawing: false,
     usePrediction: false,
     highlighterStraight: true,
+    mdAutoGroup: true,
     tapGestures: true,
     fingerDoubleTapEraser: true,
     showHud: false,
@@ -300,6 +303,7 @@ export function sanitizeEditorSettings(raw: unknown): EditorSettings {
     // v0.1 → v0.2 migration: predicted ink is reset to OFF (default) until device data shows it helps
     usePrediction: r.fountainVariant === undefined ? false : r.usePrediction === true,
     highlighterStraight: r.highlighterStraight !== false,
+    mdAutoGroup: r.mdAutoGroup !== false,
     tapGestures: r.tapGestures !== false,
     fingerDoubleTapEraser: r.fingerDoubleTapEraser !== false,
     showHud: r.showHud === true,

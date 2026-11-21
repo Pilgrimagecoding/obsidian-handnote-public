@@ -208,6 +208,8 @@ const editor = new HandNoteEditor(container, loadDoc(), settings, {
   ai,
   recognizer,
   exportPage: (index, kind) => exports.push({ index, kind }),
+  openLink: (linktext) => (((window as any).__links ??= { opened: [], pick: null }).opened.push(linktext)),
+  pickLink: () => Promise.resolve(((window as any).__links ??= { opened: [], pick: null }).pick),
   menuActions: [
     ...documentMenuActions(() => undefined),
     {

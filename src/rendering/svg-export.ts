@@ -3,7 +3,8 @@ import { pageRenderBox } from './paint';
 import type { GeometryCache } from '../document/geometry-cache';
 import { SvgPathSink, emitGeometry } from '../ink/outline';
 import { arrowEnds, arrowTangents, connectorPoints, isLine, itemCenter, shapeOutline, type Item, type Pt, type ShapeItem } from '../document/items';
-import { LINE_HEIGHT, TEXT_PAD, arrowHeadPoints, arrowSize, assetDataUrl, fontFamily, layoutText } from './items-paint';
+import { LINE_HEIGHT, LINK_COLOR, TEXT_PAD, arrowHeadPoints, arrowSize, assetDataUrl, fontFamily, layoutText } from './items-paint';
+import { findLinks } from '../document/links';
 import { emitDashedGeometry, lineDashArray } from './dash';
 import { FORMULA_PAD, formulaBoxSize, formulaDrawing, sourceDrawing } from './formula';
 import { mapLayout, topicFont } from '../mindmap/paint';
@@ -134,7 +135,19 @@ function itemSvg(it: Item, imageHref?: (src: string) => string | null): string {
   const lh = it.size * LINE_HEIGHT;
   const anchor = it.align === 'center' ? 'middle' : it.align === 'right' ? 'end' : 'start';
   const x = it.align === 'center' ? it.x + it.w / 2 : it.align === 'right' ? it.x + it.w - TEXT_PAD : it.x + TEXT_PAD;
-  const spans = L.lines.map((l, i) => `<tspan x="${f2(x)}" y="${f2(it.y + TEXT_PAD + i * lh + it.size * 1.02)}">${esc(l)}</tspan>`).join('');
+  // links: their own tspans in the link colour, underlined
+  const runs = (l: string): string => {
+    const links = findLinks(l);
+    if (!links.length) return esc(l);
+    let out = '';
+    let at = 0;
+    for (const k of links) {
+      out += esc(l.slice(at, k.start)) + `<tspan fill="${LINK_COLOR}" text-decoration="underline">${esc(l.slice(k.start, k.end))}</tspan>`;
+      at = k.end;
+    }
+    return out + esc(l.slice(at));
+  };
+  const spans = L.lines.map((l, i) => `<tspan x="${f2(x)}" y="${f2(it.y + TEXT_PAD + i * lh + it.size * 1.02)}">${runs(l)}</tspan>`).join('');
   return `<text font-family="${esc(fontFamily(it.font))}" font-size="${f2(it.size)}"${it.bold ? ' font-weight="700"' : ''}${it.italic ? ' font-style="italic"' : ''} fill="${esc(it.color)}" text-anchor="${anchor}"${rotAttr(it)}>${spans}</text>`;
 }
 

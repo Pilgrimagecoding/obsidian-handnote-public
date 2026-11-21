@@ -9,6 +9,7 @@ import type HandNotePlugin from './main';
 import { registerSources } from '../rendering/doc-layer';
 import { t, tf } from '../ui/i18n';
 import { documentMenuActions } from '../ui/document-actions';
+import { pickNoteLink } from './links';
 
 export const VIEW_TYPE = 'handnote-view';
 export const EXTENSION = 'handnote';
@@ -177,6 +178,8 @@ export class HandNoteView extends FileView {
       openAISettings: () => this.plugin.openSettings(),
       exportPage: (i, kind) => void this.plugin.exportPage(this, kind, i),
       exportView: () => void this.plugin.exportView(this),
+      openLink: (linktext) => void this.app.workspace.openLinkText(linktext, this.file?.path ?? '', false),
+      pickLink: () => pickNoteLink(this.app, this.file?.path ?? ''),
       imageBlob: async (src) => {
         const f = this.app.vault.getAbstractFileByPath(src);
         if (!(f instanceof TFile)) return null;

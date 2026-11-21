@@ -2963,3 +2963,72 @@ textarea.hn-input {
 .hn-export-range { padding-left: 24px; background: var(--background-secondary); }
 .hn-ps-head .hn-ps-filter { padding: 0; flex: 1; min-width: 0; }
 .hn-export-choices > [aria-expanded="true"] .hn-row-chevron { transform: rotate(90deg); }
+
+/* ================= phones =================
+   Same screens as PHONE_QUERY (src/ui/phone.ts): narrow, or a short landscape touch screen.
+   Every control keeps a usable size and the bars scroll sideways instead of squeezing the
+   controls on top of each other. Tablets are unchanged. */
+@media (max-width: 600px), (pointer: coarse) and (max-height: 500px) {
+  .hn-editor,
+  .hn-editor.hn-mode-mouse {
+    --hn-btn: 36px;
+  }
+  .hn-toolbar {
+    gap: 2px;
+    padding: 0 4px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-x;
+  }
+  .hn-toolbar::-webkit-scrollbar,
+  .hn-subbar::-webkit-scrollbar {
+    display: none;
+  }
+  .hn-toolbar > .hn-group {
+    flex: 0 0 auto;
+  }
+  .hn-toolbar > .hn-group.hn-right {
+    margin-left: auto;
+  }
+  .hn-group.hn-tools {
+    gap: 0;
+  }
+  .hn-editor button.hn-btn.hn-tool {
+    min-width: 34px !important;
+    padding: 0 3px !important;
+  }
+  .hn-editor .hn-toolbar .hn-btn,
+  .hn-editor .hn-subbar .hn-btn,
+  .hn-editor .hn-subbar .hn-swatch,
+  .hn-editor:not(.is-markdown) .hn-toolbar .hn-btn,
+  .hn-editor:not(.is-markdown) .hn-subbar .hn-btn,
+  .hn-editor:not(.is-markdown) .hn-subbar .hn-swatch {
+    touch-action: pan-x;
+  }
+  .hn-subbar {
+    top: calc(var(--hn-btn) + 10px);
+    box-sizing: border-box;
+    max-width: calc(100% - 8px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
+    padding: 0 4px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-x;
+  }
+  .hn-subbar > * {
+    flex: 0 0 auto;
+  }
+  .hn-subbar .hn-colors {
+    max-width: none;
+    overflow: visible;
+  }
+  .hn-popover {
+    max-width: calc(100% - 16px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
+    box-sizing: border-box;
+  }
+}

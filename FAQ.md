@@ -166,8 +166,9 @@ files over 5 MB. With that plan, install HandNote on each device from Community 
 
 ### Does it work on iPhone or Android?
 
-It contains nothing desktop-only, but phones are not tested and the toolbar is designed for tablets
-and desktops.
+Phone layouts have compact, horizontally scrolling toolbars, popovers that fit narrow screens,
+safe-area spacing and a 2× canvas density limit. Browser tests cover phone-sized viewports;
+physical iPhone and Android verification is still limited.
 
 ### Is this an official MyScript / Goodnotes / Obsidian product?
 

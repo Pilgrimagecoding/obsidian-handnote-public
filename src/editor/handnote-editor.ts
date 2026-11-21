@@ -1,5 +1,6 @@
 import { GeometryCache, hitStrokeSegment } from '../document/geometry-cache';
 import { History, type Op } from '../document/history';
+import { retargetDocument } from '../document/links';
 import {
   ENGINE_EXPERIMENTAL,
   ENGINE_VERSION,
@@ -34,7 +35,7 @@ import { boardExtent, convertPagesToBoard, defaultBoardBackground, framesInOrder
 import { confirmInEditor } from '../ui/ai-panels';
 import { roughBounds, strokesIn } from '../rendering/board-index';
 import { documentBounds, layoutPages, pageRenderBox, paintBoard, paintInkStroke, paintPageContent, paintPaper, renderPageToCanvas, type PageRect } from '../rendering/paint';
-import { LINE_HEIGHT, TEXT_PAD, assetDataUrl, fitTextBox, onImageLoaded, pencilFill, primeImage, registerAssets } from '../rendering/items-paint';
+import { LINE_HEIGHT, TEXT_PAD, assetDataUrl, fitTextBox, linkAt, onImageLoaded, pencilFill, primeImage, registerAssets } from '../rendering/items-paint';
 import { emitDashedGeometry } from '../rendering/dash';
 import { DocError, docOutline, docPageReady, onDocLayerReady, registerSources, setDocPaintText, type OutlineItem } from '../rendering/doc-layer';
 import { documentPages } from '../import/pages';
@@ -56,6 +57,7 @@ import type { RecTask } from '../recognition/types';
 import { formulaBoxSize, formulaMarkdown, onFormulaReady, renderFormula } from '../rendering/formula';
 import { el, type IconSetter, hide, show } from '../ui/dom';
 import { onTap } from '../ui/tap';
+import { canvasDpr } from '../ui/phone';
 import {
   Popover,
   renderColorPanel,
@@ -107,6 +109,10 @@ export interface EditorHost {
   openAISettings?(): void;
   /** Export one page (page navigator menu). */
   exportPage?(index: number, kind: 'png' | 'svg'): void;
+  /** Open an Obsidian link (`target#heading`) tapped in a text box. */
+  openLink?(linktext: string): void;
+  /** Choose a note to link to ("[[" typed in a text box): its link text, or null. */
+  pickLink?(): Promise<string | null>;
 }
 
 const NO_ENGINE: EngineInfo = { engine: 'vision', ready: false, reason: 'no-ai', model: '', label: '', sends: 'image', maxImageSide: 1280, kind: 'vision-llm' };
@@ -345,6 +351,7 @@ export class HandNoteEditor {
       selectGroup: (pageId, g) => this.selectGroup(pageId, g),
       onEditStart: (ta) => this.onEditStart(ta),
       editFormula: (pageId, id) => this.editFormula(pageId, id),
+      pickLink: () => this.host.pickLink?.() ?? Promise.resolve(null),
       copyText: (text) => this.copyText(text),
       copied: (page, item) => {
         const assets: Record<string, Asset> = {};
@@ -1070,7 +1077,7 @@ export class HandNoteEditor {
     }
     const w = Math.round(r.width);
     const h = Math.round(r.height);
-    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    const dpr = canvasDpr();
     if (w === this.viewW && h === this.viewH && dpr === this.dpr) return;
     const first = this.viewW === 0 && !this.hiddenCam;
     if (this.hiddenCam) {
@@ -1852,6 +1859,8 @@ export class HandNoteEditor {
         this.openContextMenu(page, l.x, l.y);
       },
       tap: (p) => {
+        // a tap on a [[link]] in a text box opens it, whatever the tool
+        if (this.tapLink(p)) return;
         // a finger tap on text (converted handwriting or a text box) types in it, whatever the tool
         if (this.tapToEdit(p)) return;
         if (this.doubleTapSwitch(p)) return;
@@ -1871,6 +1880,53 @@ export class HandNoteEditor {
         this.objects.tap(page, l.x, l.y);
       },
     };
+  }
+
+  /** A linked note was renamed: the links to it in text boxes follow (one undo step). */
+  retargetLinks(matches: (target: string) => boolean, next: string): boolean {
+    this.objects.finishEdit();
+    const ops: Op[] = [];
+    for (const page of this.doc.pages) {
+      const before = page.items;
+      if (!before.some((it) => it.type === 'text' && it.text.includes('[['))) continue;
+      const probe = { pages: [{ ...page }] };
+      if (!retargetDocument(probe, matches, next, fitTextBox)) continue;
+      page.items = probe.pages[0].items;
+      ops.push({ kind: 'set-items', pageId: page.id, before, after: page.items });
+    }
+    if (!ops.length) return false;
+    this.history.record(ops.length === 1 ? ops[0] : { kind: 'batch', ops });
+    this.afterOp(false);
+    this.requestScene(true);
+    return true;
+  }
+
+  /** Insert an Obsidian link: at the caret of the text being edited, else as a text box in view. */
+  insertLink(link: string): boolean {
+    if (this.readOnly) return false;
+    const at = { x: this.viewW / 2, y: this.viewH / 3 };
+    const r = this.pageForPoint(at);
+    const l = r ? this.localOn(r, at) : { x: 0, y: 0 };
+    return this.objects.insertLink(link, r, l.x, l.y);
+  }
+
+  private tapLink(p: RouterPointer): boolean {
+    const open = this.host.openLink;
+    if (!open || this.objects.isEditingText) return false;
+    const r = this.pageForPoint(p);
+    if (!r) return false;
+    const l = this.localOn(r, p);
+    const items = r.page.items;
+    for (let i = items.length - 1; i >= 0; i--) {
+      const it = items[i];
+      if (it.type !== 'text' || this.skipItems.has(it.id)) continue;
+      const link = linkAt(it, l.x, l.y);
+      if (!link) continue;
+      this.lastFingerTap = null;
+      open.call(this.host, link.target + link.subpath);
+      return true;
+    }
+    return false;
   }
 
   /**
