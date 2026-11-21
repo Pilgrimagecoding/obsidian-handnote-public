@@ -7,7 +7,7 @@ import obsidianmd from 'eslint-plugin-obsidianmd';
 
 export default defineConfig([
   {
-    ignores: ['main.js', 'build/**', 'release/**', 'experiments/**', 'tests/**', 'scripts/**', 'vendor/**', 'local-assets/**', 'node_modules/**', 'docs/**', 'test-output/**', 'test-vault/**', 'src/**/*.generated.ts', 'src/**/*.mjs', 'package-lock.json'],
+    ignores: ['main.js', 'build/**', 'release/**', 'experiments/ink-lab/*.js', 'tests/**', 'scripts/**', 'vendor/**', 'local-assets/**', 'node_modules/**', 'docs/**', 'test-output/**', 'test-vault/**', 'src/**/*.generated.ts', 'src/**/*.mjs', 'package-lock.json'],
   },
   ...obsidianmd.configs.recommended,
   {

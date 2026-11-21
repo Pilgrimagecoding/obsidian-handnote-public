@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.12.5 — 2026-11-21
+
+- Fix community review errors in the standalone browser harness by moving static styles to CSS classes.
+- Include experimental source files in official-rule lint checks and block releases on static-style review errors.
+- Preserve all 0.12.4 features and existing note formats.
+
+Release notes: `docs/release-notes/0.12.5.md`.
+
 ## 0.12.4 — 2026-11-21
 
 - Sharper iPad Markdown zoom and SVG embed previews.

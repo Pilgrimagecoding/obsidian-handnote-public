@@ -4,7 +4,7 @@ name: Audit
 on:
   workflow_dispatch:
   push:
-    branches: ['feature/**', 'main', 'release/**']
+    branches: ['feature/**', 'codex/**', 'main', 'release/**']
 permissions:
   contents: write
   checks: write
@@ -25,7 +25,7 @@ jobs:
       - name: ESLint (eslint-plugin-obsidianmd, recommended)
         run: npx eslint . -f json -o eslint.json || true
       - name: ESLint summary
-        run: node scripts/eslint-summary.mjs eslint.json
+        run: node scripts/eslint-summary.mjs eslint.json --blocking-rule=obsidianmd/no-static-styles-assignment
       - name: npm audit
         run: |
           npm audit --json > audit.json || true

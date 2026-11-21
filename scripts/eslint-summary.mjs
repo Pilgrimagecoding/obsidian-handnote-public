@@ -3,12 +3,13 @@
 import { readFileSync, appendFileSync } from 'node:fs';
 
 const file = process.argv[2] ?? 'eslint.json';
+const blockingRule = process.argv.find(a => a.startsWith('--blocking-rule='))?.split('=')[1];
 let results;
 try {
   results = JSON.parse(readFileSync(file, 'utf8'));
 } catch (e) {
   console.log(`::error title=ESLint did not run::${String(e.message).slice(0, 300)}`);
-  process.exit(0);
+  process.exit(1);
 }
 const byRule = new Map();
 let errors = 0;
@@ -49,3 +50,7 @@ for (const e of rules.slice(0, 0)) {
 const md = ['## ESLint (eslint-plugin-obsidianmd recommended)', '', `${errors} errors, ${warnings} warnings`, '', '| rule | errors | warnings | examples |', '|---|---|---|---|', ...rules.map((e) => `| ${e.rule} | ${e.errors} | ${e.warnings} | ${e.at.slice(0, 2).join('<br>')} |`)].join('\n');
 if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, md + '\n');
 console.log(md);
+// The directory reports many recommended type/style rules as warnings. Keep the full audit
+// visible, while enforcing the exact blocking rule and parser failures from its review.
+if (blockingRule && results.some(r => r.messages.some(m => m.fatal ||
+  (m.severity === 2 && m.ruleId === blockingRule)))) process.exitCode = 1;

@@ -13,6 +13,21 @@ permissions:
   id-token: write
   attestations: write
 jobs:
+  community-source-review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --no-audit --no-fund
+      - name: Install the official community rules
+        run: npm install --no-save --package-lock=false --no-audit --no-fund eslint@9 eslint-plugin-obsidianmd typescript-eslint
+      - run: node scripts/build-embedded-ort.mjs
+      - name: Check source and standalone harnesses
+        run: npx eslint . -f json -o eslint.json || true
+      # Report every finding; enforce the directory's blocking static-style rule and parse errors.
+      - run: node scripts/eslint-summary.mjs eslint.json --blocking-rule=obsidianmd/no-static-styles-assignment
   platform-compatibility:
     strategy:
       fail-fast: false
@@ -30,7 +45,7 @@ jobs:
       - name: Pen tablet, mouse and touch input regressions
         run: node scripts/test-platform-input.mjs
   release:
-    needs: platform-compatibility
+    needs: [platform-compatibility, community-source-review]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

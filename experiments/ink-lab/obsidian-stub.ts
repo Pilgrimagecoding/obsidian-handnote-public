@@ -12,7 +12,7 @@ function element(tag = 'div', parent?: HTMLElement, options: any = {}): any {
 }
 export class Modal {
   modalEl = element(); titleEl = element('h2',this.modalEl); contentEl = element('div',this.modalEl);
-  constructor(public app: any) { this.modalEl.className = 'test-modal'; this.modalEl.style.cssText = 'position:fixed;z-index:10000;inset:20% 20%;background:white;color:black;padding:24px;overflow:auto'; }
+  constructor(public app: any) { this.modalEl.className = 'test-modal'; }
   onOpen() {} onClose() {}
   open() { document.body.append(this.modalEl); this.onOpen(); }
   close() { this.onClose(); this.modalEl.remove(); }

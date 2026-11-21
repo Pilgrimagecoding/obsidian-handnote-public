@@ -32,7 +32,7 @@ Object.assign(globalThis, { createDiv: (options: any = {}) => {
 
 const content = document.querySelector<HTMLElement>('#md')!;
 const editorParent = content.createDiv({ cls: 'markdown-source-view' });
-editorParent.style.height = '600px';
+editorParent.classList.add('hn-lab-editor');
 const compartment = new Compartment();
 const view = new EditorView({ parent: editorParent, state: EditorState.create({
   doc: Array.from({ length: 100 }, (_, i) => `第 ${i + 1} 行 Markdown — Pencil writing test`).join('\n'),

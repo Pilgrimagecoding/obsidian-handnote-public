@@ -1,0 +1,11 @@
+/* Standalone browser harness styling; never bundled into the plugin. */
+.hn-lab-editor { height: 600px; }
+.test-modal {
+  position: fixed;
+  z-index: 10000;
+  inset: 20% 20%;
+  background: white;
+  color: black;
+  padding: 24px;
+  overflow: auto;
+}
